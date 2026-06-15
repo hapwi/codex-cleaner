@@ -1,23 +1,23 @@
 ---
 name: codex-cleaner
-description: "Use when the user invokes $codex-cleaner or asks to audit, explain, archive, rotate, or clean local Codex Desktop or Codex CLI state. This skill runs the open-source codex-cleaner npx command and summarizes the result in chat."
+description: "Use when the user invokes $codex-cleaner or asks to audit, explain, archive, rotate, or clean local Codex Desktop or Codex CLI state. This skill runs the locally installed codex-cleaner runner and summarizes the result in chat."
 metadata:
   short-description: "Audit and clean Codex local state safely"
-  version: "0.0.5"
+  version: "0.0.6"
 ---
 
 # Codex Cleaner
 
-Use this skill as a thin Codex chat wrapper around the `codex-cleaner-run` CLI.
+Use this skill as a thin Codex chat wrapper around the local `codex-cleaner-run` bundle installed with this skill.
 
-The runner CLI is the source of truth for audits and cleanup. Run it internally with `npx`; do not show the command unless the user explicitly asks for it.
+The local runner CLI is the source of truth for audits and cleanup. Run it internally from the installed skill folder; do not show the command unless the user explicitly asks for it.
 
 ## Audit First
 
 Run this before any cleanup:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run audit --json
+node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" audit --json
 ```
 
 Audit mode is read-only. It must not move files, rotate logs, edit config, or archive chats.
@@ -31,31 +31,31 @@ Only run cleanup after the user clearly chooses an action.
 Archive older non-pinned chats:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-old-chats --days 10 --json
+node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" archive-old-chats --days 10 --json
 ```
 
 Archive all non-pinned chats:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-all-chats --json
+node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" archive-all-chats --json
 ```
 
 Prune stale Codex project entries:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run prune-stale-projects --json
+node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" prune-stale-projects --json
 ```
 
 Rotate the Codex log database:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run rotate-logs --json
+node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" rotate-logs --json
 ```
 
 Archive stale Codex worktrees:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-stale-worktrees --days 7 --json
+node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" archive-stale-worktrees --days 7 --json
 ```
 
 ## Safety Rules
@@ -65,7 +65,7 @@ npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-stale-w
 - Never run cleanup without user approval.
 - Treat `logs_2.sqlite` as private. Do not print raw log bodies.
 - Summarize the CLI JSON output for the user. Do not dump raw JSON unless the user asks.
-- End every audit or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.5 | skill v0.0.5`.
+- End every audit or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.6 | skill v0.0.6`.
 - After cleanup, tell the user cleanup finished and recommend quitting/reopening Codex so the already-open UI reloads local state. A Mac restart is not needed.
 
 ## Chat Format

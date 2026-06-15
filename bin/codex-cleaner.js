@@ -15,7 +15,10 @@ const skillName = "codex-cleaner";
 const agentsHome = process.env.AGENTS_HOME || path.join(os.homedir(), ".agents");
 const skillPath = path.join(agentsHome, "skills", skillName);
 const skillFile = path.join(skillPath, "SKILL.md");
-const bundledSkillFile = path.join(repoRoot, "skills", skillName, "SKILL.md");
+const bundledSkillFileCandidates = [
+  path.join(repoRoot, "skills", skillName, "SKILL.md"),
+  path.join(repoRoot, "SKILL.md"),
+];
 const invokedName = path.basename(process.argv[1] || "codex-cleaner");
 const invokedAsRunner = process.env.CODEX_CLEANER_RUNNER === "1" || invokedName === "codex-cleaner-run";
 const useColor = process.env.NO_COLOR !== "1" && process.stdout.isTTY;
@@ -114,10 +117,20 @@ function readSkillVersion(file) {
   }
 }
 
+function readBundledSkillVersion() {
+  for (const file of bundledSkillFileCandidates) {
+    const version = readSkillVersion(file);
+    if (version) {
+      return version;
+    }
+  }
+  return packageVersion;
+}
+
 function versionInfo() {
   return {
     cli: packageVersion,
-    bundledSkill: readSkillVersion(bundledSkillFile) || packageVersion,
+    bundledSkill: readBundledSkillVersion(),
     installedSkill: readSkillVersion(skillFile),
     installedSkillPath: skillFile,
   };
@@ -166,7 +179,7 @@ function printCurrentSkillMessage() {
   console.log(color.bold("Next step"));
   console.log(`${mark.arrow} Start a new Codex chat and invoke ${color.bold("$codex-cleaner")}.`);
   console.log("");
-  console.log("The installed skill will run the cleaner through codex-cleaner-run inside that chat.");
+  console.log("The installed skill will run the local cleaner bundle inside that chat.");
   printVersionFooter();
 }
 

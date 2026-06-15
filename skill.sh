@@ -41,6 +41,12 @@ case "$COMMAND" in
     fi
     mkdir -p "$TARGET_DIR"
     cp -R "$SOURCE_DIR"/. "$TARGET_DIR"/
+    mkdir -p "$TARGET_DIR/bin" "$TARGET_DIR/scripts"
+    cp "$SCRIPT_DIR/bin/codex-cleaner.js" "$TARGET_DIR/bin/codex-cleaner.js"
+    cp "$SCRIPT_DIR/bin/codex-cleaner-run.js" "$TARGET_DIR/bin/codex-cleaner-run.js"
+    cp "$SCRIPT_DIR/scripts/codex_cleaner.py" "$TARGET_DIR/scripts/codex_cleaner.py"
+    cp "$SCRIPT_DIR/package.json" "$TARGET_DIR/package.json"
+    chmod +x "$TARGET_DIR/bin/codex-cleaner.js" "$TARGET_DIR/bin/codex-cleaner-run.js" "$TARGET_DIR/scripts/codex_cleaner.py"
     echo "installed $TARGET_DIR"
     echo "start a new Codex chat and invoke \$codex-cleaner"
     ;;

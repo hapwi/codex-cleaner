@@ -56,7 +56,7 @@ $codex-cleaner
 
 If the skill is already installed but the bundled GitHub version is newer, the bootstrap command prompts before replacing the local skill file.
 
-If the installed skill is already current, the bootstrap command runs a read-only audit immediately. The audit also runs inside Codex when you invoke `$codex-cleaner`.
+If the installed skill is already current, the bootstrap command tells you the skill is up to date and shows how to run it in Codex. It does not run the cleaner in your terminal.
 
 ## What It Cleans
 
@@ -73,23 +73,23 @@ If the installed skill is already current, the bootstrap command runs a read-onl
 Read-only audit:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner audit
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run audit
 ```
 
 Cleanup commands:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner archive-old-chats --days 10
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner archive-all-chats
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner prune-stale-projects
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner rotate-logs
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner archive-stale-worktrees --days 7
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-old-chats --days 10
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-all-chats
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run prune-stale-projects
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run rotate-logs
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-stale-worktrees --days 7
 ```
 
 Structured output for Codex agents:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner audit --json
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run audit --json
 ```
 
 Version/status checks:
@@ -105,7 +105,7 @@ The bundled `$codex-cleaner` skill keeps the chat experience simple:
 
 ```text
 User invokes $codex-cleaner
-  -> Codex runs the npx audit command
+  -> Codex runs codex-cleaner-run through npx
   -> Codex explains the cleanup menu in chat
   -> User picks an action
   -> Codex runs only the approved cleanup command

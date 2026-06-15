@@ -1,10 +1,11 @@
 {
   "name": "codex-cleaner",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Audit and safely clean local Codex app state from the terminal or a Codex skill.",
   "license": "MIT",
   "bin": {
-    "codex-cleaner": "./bin/codex-cleaner.js"
+    "codex-cleaner": "./bin/codex-cleaner.js",
+    "codex-cleaner-run": "./bin/codex-cleaner-run.js"
   },
   "files": [
     "assets/",
@@ -17,7 +18,8 @@
   ],
   "scripts": {
     "start": "node ./bin/codex-cleaner.js",
-    "audit": "node ./bin/codex-cleaner.js audit",
+    "audit": "node ./bin/codex-cleaner-run.js audit",
+    "run:audit": "node ./bin/codex-cleaner-run.js audit",
     "skill:status": "node ./bin/codex-cleaner.js skill-status"
   },
   "engines": {

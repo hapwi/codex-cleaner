@@ -16,27 +16,39 @@ const agentsHome = process.env.AGENTS_HOME || path.join(os.homedir(), ".agents")
 const skillPath = path.join(agentsHome, "skills", skillName);
 const skillFile = path.join(skillPath, "SKILL.md");
 const bundledSkillFile = path.join(repoRoot, "skills", skillName, "SKILL.md");
+const invokedName = path.basename(process.argv[1] || "codex-cleaner");
+const invokedAsRunner = process.env.CODEX_CLEANER_RUNNER === "1" || invokedName === "codex-cleaner-run";
 
 function usage() {
   console.log(`Codex Cleaner
 
 Usage:
-  codex-cleaner                         Check the skill version, then audit when current
+  codex-cleaner                         Check/install/update the Codex skill
   codex-cleaner --yes                   Install/update the skill without prompting
   codex-cleaner install-skill [--force] Install the bundled $codex-cleaner skill
   codex-cleaner skill-status            Show whether the $codex-cleaner skill is installed
   codex-cleaner version                 Show CLI and bundled skill versions
-  codex-cleaner audit [--json]          Run a read-only audit
+
+Codex agents should run cleanup through:
+  codex-cleaner-run audit [--json]
+`);
+}
+
+function runnerUsage() {
+  console.log(`Codex Cleaner Runner
+
+Usage:
+  codex-cleaner-run audit [--json]          Run a read-only audit
 
 Cleanup commands:
-  codex-cleaner archive-old-chats --days 10 [--json]
-  codex-cleaner archive-all-chats [--json]
-  codex-cleaner prune-stale-projects [--json]
-  codex-cleaner rotate-logs [--json]
-  codex-cleaner archive-stale-worktrees --days 7 [--json]
+  codex-cleaner-run archive-old-chats --days 10 [--json]
+  codex-cleaner-run archive-all-chats [--json]
+  codex-cleaner-run prune-stale-projects [--json]
+  codex-cleaner-run rotate-logs [--json]
+  codex-cleaner-run archive-stale-worktrees --days 7 [--json]
 
 Advanced:
-  codex-cleaner raw -- <codex_cleaner.py flags>
+  codex-cleaner-run raw -- <codex_cleaner.py flags>
 `);
 }
 
@@ -127,9 +139,14 @@ function printCodexStartMessage(status) {
 
 function printCurrentSkillMessage() {
   const versions = versionInfo();
-  console.log(`$${skillName} skill is current at ${skillPath}`);
+  console.log(`$${skillName} skill is up to date at ${skillPath}`);
   console.log(`installed skill version: ${versions.installedSkill || "unknown"}`);
   console.log("");
+  console.log("Next step:");
+  console.log("Start a new Codex chat and invoke $codex-cleaner.");
+  console.log("");
+  console.log("The installed skill will run the cleaner through codex-cleaner-run inside that chat.");
+  printVersionFooter();
 }
 
 function runPython(pythonArgs, options = {}) {
@@ -216,7 +233,7 @@ async function bootstrap(args) {
       }
     }
     printCurrentSkillMessage();
-    return runPython(yes.args, { json: false });
+    return 0;
   }
 
   if (!process.stdin.isTTY && !yes.present) {
@@ -297,12 +314,27 @@ function mapCommand(command, args) {
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--help") || argv.includes("-h")) {
-    usage();
+    if (invokedAsRunner) {
+      runnerUsage();
+    } else {
+      usage();
+    }
     return 0;
   }
 
   const command = argv[0];
   const rest = command ? argv.slice(1) : [];
+
+  if (invokedAsRunner) {
+    const runnerCommand = command || "audit";
+    const mapped = mapCommand(runnerCommand, command ? rest : argv);
+    if (!mapped) {
+      console.error(`Unknown runner command: ${runnerCommand}`);
+      runnerUsage();
+      return 2;
+    }
+    return runPython(mapped.pythonArgs, { json: mapped.json });
+  }
 
   if (!command || command.startsWith("-")) {
     return bootstrap(argv);
@@ -336,13 +368,9 @@ async function main() {
     return 1;
   }
 
-  const mapped = mapCommand(command, rest);
-  if (!mapped) {
-    console.error(`Unknown command: ${command}`);
-    usage();
-    return 2;
-  }
-  return runPython(mapped.pythonArgs, { json: mapped.json });
+  console.error(`Unknown command: ${command}`);
+  usage();
+  return 2;
 }
 
 main()

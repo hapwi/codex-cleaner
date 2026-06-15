@@ -58,13 +58,40 @@ If the skill is already installed but the bundled GitHub version is newer, the b
 
 If the installed skill is already current, the bootstrap command tells you the skill is up to date and shows how to run it in Codex. It does not run the cleaner in your terminal.
 
-The installer copies a local runner bundle into the installed skill folder. Codex uses that local runner, so `$codex-cleaner` does not fetch GitHub package code during the chat.
+The installed skill runs the GitHub `npx` runner inside the Codex chat. Codex may ask for explicit approval because this fetches public package code that reads private local Codex state.
 
 The runner command also checks the installed skill version before auditing or cleaning. If the skill is missing or stale, the runner stops and tells you to run:
 
 ```bash
 npx hapwi/codex-cleaner
 ```
+
+The installer also writes a safe metadata file:
+
+```text
+~/.hapwicleaner/install.json
+```
+
+That file contains only Codex Cleaner install metadata: package version, skill version, skill path, runner mode, and timestamps. It does not contain Codex chats, logs, sessions, or other `~/.codex` state.
+
+Inside Codex, the runner can also fetch this public GitHub metadata endpoint to see whether GitHub has a newer published release:
+
+```text
+https://api.github.com/repos/hapwi/codex-cleaner/releases/latest
+```
+
+If the remote version is newer than the safe local manifest, the runner stops before auditing and tells the user to run `npx hapwi/codex-cleaner`.
+
+## Releases
+
+Pushing a version tag creates or updates a GitHub Release automatically:
+
+```bash
+git tag v0.0.8
+git push origin v0.0.8
+```
+
+The runner checks the latest GitHub Release, not raw `main`, when deciding whether the installed skill is current.
 
 ## What It Cleans
 
@@ -81,23 +108,23 @@ npx hapwi/codex-cleaner
 Read-only audit:
 
 ```bash
-node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" audit
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run audit
 ```
 
 Cleanup commands:
 
 ```bash
-node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" archive-old-chats --days 10
-node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" archive-all-chats
-node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" prune-stale-projects
-node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" rotate-logs
-node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" archive-stale-worktrees --days 7
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-old-chats --days 10
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-all-chats
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run prune-stale-projects
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run rotate-logs
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-stale-worktrees --days 7
 ```
 
 Structured output for Codex agents:
 
 ```bash
-node "${AGENTS_HOME:-$HOME/.agents}/skills/codex-cleaner/bin/codex-cleaner-run.js" audit --json
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run audit --json
 ```
 
 Version/status checks:
@@ -113,7 +140,7 @@ The bundled `$codex-cleaner` skill keeps the chat experience simple:
 
 ```text
 User invokes $codex-cleaner
-  -> Codex runs the local codex-cleaner-run bundle
+  -> Codex runs codex-cleaner-run through npx
   -> Codex explains the cleanup menu in chat
   -> User picks an action
   -> Codex runs only the approved cleanup command

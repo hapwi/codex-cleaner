@@ -61,6 +61,17 @@ class StateSnapshot:
     archive_all_candidates: int
 
 
+@dataclass
+class BackupEntry:
+    path: Path
+    created_at: float
+    actions: list[str]
+    chat_manifests: list[Path]
+    log_manifests: list[Path]
+    worktree_manifests: list[Path]
+    project_list: Path | None
+
+
 def stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
@@ -115,6 +126,12 @@ def human_size(value: int) -> str:
     return f"{value}B"
 
 
+def human_time(timestamp: float | int | None) -> str:
+    if not timestamp:
+        return "unknown"
+    return datetime.fromtimestamp(float(timestamp)).strftime("%Y-%m-%d %H:%M")
+
+
 def render_table(headers: list[str], rows: list[list[str]]) -> None:
     all_rows = [headers, *rows]
     widths = [max(len(str(row[index])) for row in all_rows) for index in range(len(headers))]
@@ -125,6 +142,57 @@ def render_table(headers: list[str], rows: list[list[str]]) -> None:
     for row in rows:
         print("| " + " | ".join(str(row[index]).ljust(widths[index]) for index, width in enumerate(widths)) + " |")
     print(rule)
+
+
+def read_lines_if_exists(path: Path) -> list[str]:
+    try:
+        if path.exists():
+            return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError:
+        pass
+    return []
+
+
+def backup_entries(root: Path) -> list[BackupEntry]:
+    if not root.exists():
+        return []
+    entries: list[BackupEntry] = []
+    for path in root.iterdir():
+        if not path.is_dir() or not path.name.startswith("codex-cleaner-"):
+            continue
+        try:
+            created_at = path.stat().st_mtime
+        except OSError:
+            created_at = 0
+        entries.append(
+            BackupEntry(
+                path=path,
+                created_at=created_at,
+                actions=read_lines_if_exists(path / "selected-actions.txt"),
+                chat_manifests=sorted(path.glob("archived-chats-*.jsonl")),
+                log_manifests=sorted(path.glob("rotated-logs-*.jsonl")),
+                worktree_manifests=sorted(path.glob("archived-worktrees-*.jsonl")),
+                project_list=(path / "pruned-projects.txt") if (path / "pruned-projects.txt").exists() else None,
+            )
+        )
+    return sorted(entries, key=lambda entry: entry.created_at, reverse=True)
+
+
+def latest_chat_backup(root: Path) -> BackupEntry | None:
+    for entry in backup_entries(root):
+        if entry.chat_manifests:
+            return entry
+    return None
+
+
+def cleanup_health(snapshot: StateSnapshot) -> tuple[str, str]:
+    if not snapshot.thread_db_found:
+        return "Needs attention", "Codex thread database was not found, so chat cleanup is unavailable."
+    if snapshot.archive_old_candidates or snapshot.stale_projects or snapshot.stale_worktrees:
+        return "Needs cleanup", "Safe reset has useful work to do."
+    if snapshot.log_storage > 0:
+        return "Light cleanup available", "Only log rotation appears useful right now."
+    return "Clean", "No obvious Codex clutter was found."
 
 
 def delta_number(before: int, after: int) -> str:
@@ -363,6 +431,135 @@ def print_cleanup_details(home: Path, stale_projects: list[str], args: argparse.
     print("- codex-cleaner does not delete archives automatically")
 
 
+def print_presets(snapshot: StateSnapshot, effective_days: int) -> None:
+    render_table(
+        ["Reply", "Best for", "Will change"],
+        [
+            [
+                "run safe reset",
+                "Normal cleanup",
+                f"Old chats >{effective_days}d, stale projects, stale worktrees, logs if free",
+            ],
+            [
+                "run sidebar cleanup",
+                "A busy Codex sidebar",
+                f"{snapshot.archive_old_candidates} old non-pinned chat(s)",
+            ],
+            [
+                "run storage cleanup",
+                "Local Codex storage",
+                f"Old chats >{effective_days}d, stale worktrees, {human_size(snapshot.log_storage)} logs if free",
+            ],
+            [
+                "run deep archive",
+                "Nearly empty sidebar",
+                f"{snapshot.archive_all_candidates} non-pinned chat(s), stale projects, stale worktrees, logs if free",
+            ],
+        ],
+    )
+
+
+def print_history(root: Path, limit: int) -> None:
+    entries = backup_entries(root)
+    print("Codex Cleaner History")
+    print("=====================")
+    print(f"Backup root: {root}")
+    print("")
+    if not entries:
+        print("No Codex Cleaner backup history was found.")
+        return
+    rows = []
+    for index, entry in enumerate(entries[:limit], start=1):
+        restore = []
+        if entry.chat_manifests:
+            restore.append("chats")
+        if entry.log_manifests:
+            restore.append("logs")
+        if entry.worktree_manifests:
+            restore.append("worktrees")
+        if entry.project_list:
+            restore.append("project list")
+        rows.append(
+            [
+                str(index),
+                human_time(entry.created_at),
+                ", ".join(entry.actions) if entry.actions else "unknown",
+                ", ".join(restore) if restore else "backup only",
+                str(entry.path),
+            ]
+        )
+    render_table(["#", "When", "Actions", "Restore data", "Backup folder"], rows)
+    print("")
+    chat_entry = latest_chat_backup(root)
+    if chat_entry:
+        print("Latest Restorable Chat Archive")
+        print("------------------------------")
+        render_table(
+            ["Item", "Value"],
+            [
+                ["When", human_time(chat_entry.created_at)],
+                ["Backup", str(chat_entry.path)],
+                ["Manifest", str(chat_entry.chat_manifests[-1])],
+                ["Reply", "restore last chat archive"],
+            ],
+        )
+
+
+def restore_chat_archive(home: Path, backup_root: Path) -> None:
+    source_entry = latest_chat_backup(backup_root)
+    if not source_entry:
+        print("restore_last_chat_archive skipped_no_chat_archive")
+        return
+    manifest = source_entry.chat_manifests[-1]
+    state = thread_db_path(home)
+    if not state.exists():
+        print(f"restore_last_chat_archive skipped_thread_db_missing {state}")
+        return
+    conn = connect_sqlite(state, readonly=False)
+    restored = 0
+    files_moved = 0
+    bytes_moved = 0
+    for line in manifest.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        old_path = record.get("old_rollout_path")
+        new_path = record.get("new_rollout_path")
+        if record.get("moved") and old_path and new_path:
+            source = Path(new_path)
+            dest = Path(old_path)
+            if source.exists():
+                moved_size = source.stat().st_size
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(source), str(dest))
+                files_moved += 1
+                bytes_moved += moved_size
+        conn.execute(
+            "update threads set rollout_path=?, archived=0, archived_at=NULL where id=?",
+            (old_path, record["thread_id"]),
+        )
+        restored += 1
+    conn.commit()
+    try:
+        conn.execute("pragma wal_checkpoint(truncate)")
+    except Exception:
+        pass
+    conn.close()
+    print("Chat Restore Result")
+    print("-------------------")
+    render_table(
+        ["Result", "Value"],
+        [
+            ["Threads restored", str(restored)],
+            ["Session files moved back", str(files_moved)],
+            ["Session storage moved back", human_size(bytes_moved)],
+            ["Source backup", str(source_entry.path)],
+            ["Manifest", str(manifest)],
+        ],
+    )
+    print("")
+
+
 def thread_age_time(row: ThreadRow) -> int | None:
     return row.created_at if row.created_at is not None else row.updated_at
 
@@ -471,10 +668,63 @@ def print_delta_table(before: StateSnapshot, after: StateSnapshot) -> None:
 def audit(args: argparse.Namespace, home: Path) -> None:
     effective_days = max(args.archive_older_than_days, MIN_ARCHIVE_OLD_DAYS)
     snapshot, stale_projects, stale_worktrees = collect_state(home, args)
+    health, health_note = cleanup_health(snapshot)
+    history = backup_entries(Path(args.backup_root).expanduser().resolve())
+    latest_cleanup = history[0] if history else None
 
     print("Codex Cleaner Audit")
     print("===================")
     print("Nothing has been changed. This is a read-only report.")
+    print("")
+    print("Overview")
+    print("--------")
+    render_table(
+        ["Item", "Status"],
+        [
+            ["Health", health],
+            ["Recommendation", health_note],
+            ["Active chats", f"{snapshot.threads_active} active / {snapshot.threads_archived} archived"],
+            ["Archivable old chats", f"{snapshot.archive_old_candidates} older than {effective_days} day(s)"],
+            ["Pinned chats", f"{snapshot.pinned_threads} protected"],
+            ["Active sessions", human_size(snapshot.active_session_storage)],
+            ["Log database", f"{human_size(snapshot.log_storage)} ({'open' if snapshot.log_open else 'free'})"],
+            ["Stale projects", str(snapshot.stale_projects)],
+            ["Stale worktrees", str(snapshot.stale_worktrees)],
+            ["Last cleanup", human_time(latest_cleanup.created_at) if latest_cleanup else "none found"],
+        ],
+    )
+    print("")
+    print("Recommended")
+    print("-----------")
+    if health == "Clean":
+        print("No cleanup is needed right now. Optional maintenance reply:")
+        print("")
+        print("run safe reset")
+    elif health == "Light cleanup available":
+        print("Only light maintenance appears useful. Reply with:")
+        print("")
+        print("rotate logs")
+    else:
+        print("Reply with this for the normal Codex Cleaner pass:")
+        print("")
+        print("run safe reset")
+        print("")
+        print("Safe reset archives old non-pinned chats, prunes stale Codex project shortcuts, archives stale Codex worktrees, and rotates logs only if the log database is free.")
+    print("")
+    print("Cleanup Presets")
+    print("---------------")
+    print_presets(snapshot, effective_days)
+    print("")
+    print("History And Restore")
+    print("-------------------")
+    render_table(
+        ["Reply", "Shows or changes"],
+        [
+            ["show cleanup history", "Recent Codex Cleaner backups and restore data"],
+            ["show last cleanup", "Most recent backup only"],
+            ["restore last chat archive", "Moves the latest chat archive back into active Codex state"],
+        ],
+    )
     print("")
     print("Current State")
     print("-------------")
@@ -484,9 +734,9 @@ def audit(args: argparse.Namespace, home: Path) -> None:
         print_state_table(snapshot, effective_days)
     print("")
 
-    print("Cleanup Menu")
-    print("------------")
-    print("Reply in this chat with one of these:")
+    print("Advanced Cleanup")
+    print("----------------")
+    print("Use these when you want one exact action instead of a preset:")
     render_table(
         ["Reply", "Will change", "Protects"],
         [
@@ -787,6 +1037,8 @@ def archive_worktrees(home: Path, backup: Path, args: argparse.Namespace) -> Non
 
 def selected_actions(args: argparse.Namespace) -> list[str]:
     actions = []
+    if args.restore_last_chat_archive:
+        actions.append("restore-last-chat-archive")
     if args.archive_all_chats:
         actions.append("archive-all-chats")
     if args.archive_old_chats:
@@ -805,6 +1057,7 @@ def print_restart_notice(actions: list[str]) -> None:
         action.startswith("archive-")
         or action == "rotate-logs"
         or action == "prune-stale-projects"
+        or action == "restore-last-chat-archive"
         for action in actions
     )
     if not needs_restart:
@@ -844,6 +1097,8 @@ def apply_cleanup(args: argparse.Namespace, home: Path) -> int:
             return 0
     before_snapshot, _, _ = collect_state(home, args)
     backup = make_backup(home, Path(args.backup_root).expanduser().resolve(), actions)
+    if args.restore_last_chat_archive:
+        restore_chat_archive(home, Path(args.backup_root).expanduser().resolve())
     if args.archive_all_chats or args.archive_old_chats:
         archive_chats(home, backup, args)
     if args.rotate_logs:
@@ -867,6 +1122,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--codex-home")
     parser.add_argument("--backup-root", default=str(default_backup_root()))
     parser.add_argument("--apply", action="store_true", help="Apply selected cleanup actions. Omit for audit only.")
+    parser.add_argument("--history", action="store_true", help="Show Codex Cleaner backup history.")
+    parser.add_argument("--history-limit", type=int, default=10)
+    parser.add_argument("--safe-reset", action="store_true", help="Preset: old chats, stale projects, stale worktrees, logs if free.")
+    parser.add_argument("--sidebar-cleanup", action="store_true", help="Preset: archive old non-pinned chats.")
+    parser.add_argument("--storage-cleanup", action="store_true", help="Preset: old chats, stale worktrees, logs if free.")
+    parser.add_argument("--deep-archive", action="store_true", help="Preset: archive all non-pinned chats plus other safe cleanup.")
     parser.add_argument("--archive-all-chats", action="store_true")
     parser.add_argument("--archive-old-chats", action="store_true")
     parser.add_argument("--archive-older-than-days", type=int, default=10)
@@ -881,14 +1142,46 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--prune-stale-projects", action="store_true")
     parser.add_argument("--archive-stale-worktrees", action="store_true")
     parser.add_argument("--worktree-older-than-days", type=int, default=7)
+    parser.add_argument("--restore-last-chat-archive", action="store_true")
     args = parser.parse_args(argv)
+    presets = [args.safe_reset, args.sidebar_cleanup, args.storage_cleanup, args.deep_archive]
+    if sum(1 for selected in presets if selected) > 1:
+        parser.error("choose only one cleanup preset")
+    if args.safe_reset:
+        args.archive_old_chats = True
+        args.prune_stale_projects = True
+        args.archive_stale_worktrees = True
+        args.rotate_logs = True
+    if args.sidebar_cleanup:
+        args.archive_old_chats = True
+    if args.storage_cleanup:
+        args.archive_old_chats = True
+        args.archive_stale_worktrees = True
+        args.rotate_logs = True
+    if args.deep_archive:
+        args.archive_all_chats = True
+        args.prune_stale_projects = True
+        args.archive_stale_worktrees = True
+        args.rotate_logs = True
     if args.archive_all_chats and args.archive_old_chats:
         parser.error("choose --archive-all-chats or --archive-old-chats, not both")
+    cleanup_flags = [
+        args.archive_all_chats,
+        args.archive_old_chats,
+        args.rotate_logs,
+        args.prune_stale_projects,
+        args.archive_stale_worktrees,
+    ]
+    if args.restore_last_chat_archive and any(cleanup_flags):
+        parser.error("restore-last-chat-archive must run by itself")
     return args
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.history:
+        print_history(Path(args.backup_root).expanduser().resolve(), max(args.history_limit, 1))
+        return 0
     home = codex_home(args.codex_home)
     if not home.exists():
         print(f"codex_home_missing {home}")

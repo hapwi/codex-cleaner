@@ -9,7 +9,7 @@
 
 **A safer reset button for local Codex clutter. Built for people who live in Codex every day.**
 
-Codex Cleaner audits local Codex Desktop and Codex CLI state, explains what is taking up space, and helps archive old chats, rotate logs, prune stale project shortcuts, and move old worktrees without permanently deleting history.
+Codex Cleaner audits local Codex Desktop and Codex CLI state, explains what is taking up space, and helps archive old chats, rotate logs, prune stale project shortcuts, move old worktrees, review cleanup history, and restore the latest chat archive without permanently deleting history.
 
 ## Install
 
@@ -55,6 +55,26 @@ $codex-cleaner
 
 The skill runs the `codex-cleaner-run` command through `npx`, asks the runner for structured JSON, then turns the result into a guided cleanup menu in chat.
 
+The default `$codex-cleaner` experience is a Codex-native control panel:
+
+```text
+Health: Needs cleanup
+Recommended: run safe reset
+Protected: pinned chats, memories, skills, plugins, credentials, and normal project folders
+```
+
+Common replies:
+
+```text
+run safe reset
+run sidebar cleanup
+run storage cleanup
+run deep archive
+show cleanup history
+show last cleanup
+restore last chat archive
+```
+
 Codex may ask for approval because the runner fetches public GitHub package code and audits private local Codex state. That is expected. The audit is read-only, and cleanup still requires an explicit follow-up choice.
 
 ## Update
@@ -95,6 +115,17 @@ npx hapwi/codex-cleaner
 | Logs | Rotates `logs_2.sqlite` into archived logs | Waits until the log DB is free |
 | Project config | Removes saved entries for missing/temp folders | Does not delete project files |
 | Worktrees | Moves stale Codex worktrees out of the active folder | Does not touch normal project folders |
+| History | Lists prior Codex Cleaner backup folders | Reads backup metadata only |
+| Restore | Restores the latest chat archive | Creates a fresh backup before restoring |
+
+## Cleanup Presets
+
+| Preset | Best For | What It Does |
+|---|---|---|
+| `safe-reset` | Normal cleanup | Archives old non-pinned chats, prunes stale projects, archives stale worktrees, rotates logs if free |
+| `sidebar-cleanup` | A crowded Codex sidebar | Archives old non-pinned chats only |
+| `storage-cleanup` | Local Codex storage | Archives old non-pinned chats, archives stale worktrees, rotates logs if free |
+| `deep-archive` | A nearly empty sidebar | Archives all non-pinned chats, prunes stale projects, archives stale worktrees, rotates logs if free |
 
 ## Terminal Usage
 
@@ -104,7 +135,16 @@ Read-only audit:
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run audit
 ```
 
-Cleanup commands:
+Cleanup presets:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run safe-reset
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run sidebar-cleanup
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run storage-cleanup
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run deep-archive
+```
+
+Advanced cleanup commands:
 
 ```bash
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-old-chats --days 10
@@ -112,6 +152,14 @@ npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-all-cha
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run prune-stale-projects
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run rotate-logs
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-stale-worktrees --days 7
+```
+
+History and restore:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run history
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run last-cleanup
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run restore-last-chat-archive
 ```
 
 Structured output for Codex agents:
@@ -157,8 +205,8 @@ The goal is a consistent skill lifecycle: install with one command, invoke natur
 Pushing a version tag creates or updates a GitHub Release automatically:
 
 ```bash
-git tag v0.0.9
-git push origin v0.0.9
+git tag v0.0.10
+git push origin v0.0.10
 ```
 
 The runner checks the latest GitHub Release, not raw `main`, when deciding whether the installed skill is current.
@@ -172,7 +220,7 @@ npx hapwi/codex-cleaner
 So `main` should track the latest released code. For a pinned install, use:
 
 ```bash
-npx hapwi/codex-cleaner#v0.0.9
+npx hapwi/codex-cleaner#v0.0.10
 ```
 
 ## Safety

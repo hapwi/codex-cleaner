@@ -64,13 +64,22 @@ function runnerUsage() {
 
 Usage:
   codex-cleaner-run audit [--json]          Run a read-only audit
+  codex-cleaner-run history [--json]        Show recent cleanup backups
+  codex-cleaner-run last-cleanup [--json]   Show the most recent cleanup backup
 
-Cleanup commands:
+Cleanup presets:
+  codex-cleaner-run safe-reset [--json]
+  codex-cleaner-run sidebar-cleanup [--json]
+  codex-cleaner-run storage-cleanup [--json]
+  codex-cleaner-run deep-archive [--json]
+
+Advanced cleanup commands:
   codex-cleaner-run archive-old-chats --days 10 [--json]
   codex-cleaner-run archive-all-chats [--json]
   codex-cleaner-run prune-stale-projects [--json]
   codex-cleaner-run rotate-logs [--json]
   codex-cleaner-run archive-stale-worktrees --days 7 [--json]
+  codex-cleaner-run restore-last-chat-archive [--json]
 
 Advanced:
   codex-cleaner-run raw -- <codex_cleaner.py flags>
@@ -500,6 +509,18 @@ function mapCommand(command, args) {
   switch (command) {
     case "audit":
       return { pythonArgs: current, json: jsonFlag.present };
+    case "history":
+      return { pythonArgs: ["--history", ...current], json: jsonFlag.present };
+    case "last-cleanup":
+      return { pythonArgs: ["--history", "--history-limit", "1", ...current], json: jsonFlag.present };
+    case "safe-reset":
+      return { pythonArgs: ["--apply", "--safe-reset", ...current], json: jsonFlag.present };
+    case "sidebar-cleanup":
+      return { pythonArgs: ["--apply", "--sidebar-cleanup", ...current], json: jsonFlag.present };
+    case "storage-cleanup":
+      return { pythonArgs: ["--apply", "--storage-cleanup", ...current], json: jsonFlag.present };
+    case "deep-archive":
+      return { pythonArgs: ["--apply", "--deep-archive", ...current], json: jsonFlag.present };
     case "archive-old-chats": {
       const days = takeOption(current, ["--days", "-d"]);
       current = days.args;
@@ -538,6 +559,8 @@ function mapCommand(command, args) {
         json: jsonFlag.present,
       };
     }
+    case "restore-last-chat-archive":
+      return { pythonArgs: ["--apply", "--restore-last-chat-archive", ...current], json: jsonFlag.present };
     case "raw": {
       const passthrough = current[0] === "--" ? current.slice(1) : current;
       return { pythonArgs: passthrough, json: jsonFlag.present };

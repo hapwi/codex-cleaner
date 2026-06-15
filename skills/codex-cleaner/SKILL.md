@@ -3,7 +3,7 @@ name: codex-cleaner
 description: "Use when the user invokes $codex-cleaner or asks to audit, explain, archive, rotate, or clean local Codex Desktop or Codex CLI state. This skill runs the open-source codex-cleaner npx runner and summarizes the result in chat."
 metadata:
   short-description: "Audit and clean Codex local state safely"
-  version: "0.0.8"
+  version: "0.0.9"
 ---
 
 # Codex Cleaner
@@ -67,7 +67,7 @@ npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-stale-w
 - Never run cleanup without user approval.
 - Treat `logs_2.sqlite` as private. Do not print raw log bodies.
 - Summarize the CLI JSON output for the user. Do not dump raw JSON unless the user asks.
-- End every audit or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.8 | skill v0.0.8`.
+- End every audit or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.9 | skill v0.0.9`.
 - After cleanup, tell the user cleanup finished and recommend quitting/reopening Codex so the already-open UI reloads local state. A Mac restart is not needed.
 
 ## Chat Format

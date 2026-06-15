@@ -9,89 +9,82 @@
 
 **A safer reset button for local Codex clutter. Built for people who live in Codex every day.**
 
-Codex Cleaner audits your local Codex Desktop and Codex CLI state, explains what is taking up space, and helps you archive old chats, rotate logs, prune stale project shortcuts, and move old worktrees without permanently deleting your history.
+Codex Cleaner audits local Codex Desktop and Codex CLI state, explains what is taking up space, and helps archive old chats, rotate logs, prune stale project shortcuts, and move old worktrees without permanently deleting history.
 
-It works two ways:
+## Install
 
-- **As a one-time CLI:** run it from any terminal with `npx`.
-- **As a Codex-native skill:** install `$codex-cleaner`, then manage cleanup from inside a Codex chat.
-
-```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner
-```
-
-## Why People Use It
-
-Codex can accumulate a lot of local state: active chats, archived sessions, log databases, temporary worktrees, and saved project config. Codex Cleaner turns that hidden state into a clear menu.
-
-No guessing. No manual digging through `~/.codex`. No risky delete commands.
-
-## Highlights
-
-- **Instant audit:** see active chats, archived sessions, pinned threads, log size, stale config, and old worktrees.
-- **Guided cleanup:** get a plain-English menu instead of a raw diagnostic dump.
-- **Backup-first actions:** state-changing cleanup writes backups and manifests before moving anything.
-- **Codex-native workflow:** invoke `$codex-cleaner`, review the menu in chat, approve only the action you want.
-- **No permanent deletes:** archive and rotate by default; clearing archives is intentionally separate.
-
-## Quick Start
-
-Run the bootstrap command:
-
-```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner
-```
-
-On first run, Codex Cleaner checks for the `$codex-cleaner` skill at:
-
-```text
-~/.agents/skills/codex-cleaner
-```
-
-If the skill is missing, it asks before installing it. If the skill is stale, it asks before updating it. After install/update, it stops and tells you to start a new Codex chat and invoke:
-
-```text
-$codex-cleaner
-```
-
-If the skill is already installed but the bundled GitHub version is newer, the bootstrap command prompts before replacing the local skill file.
-
-If the installed skill is already current, the bootstrap command tells you the skill is up to date and shows how to run it in Codex. It does not run the cleaner in your terminal.
-
-The installed skill runs the GitHub `npx` runner inside the Codex chat. Codex may ask for explicit approval because this fetches public package code that reads private local Codex state.
-
-The runner command also checks the installed skill version before auditing or cleaning. If the skill is missing or stale, the runner stops and tells you to run:
+Run the bootstrap command in Terminal:
 
 ```bash
 npx hapwi/codex-cleaner
 ```
 
-The installer also writes a safe metadata file:
+That command checks and installs the Codex skill here:
+
+```text
+~/.agents/skills/codex-cleaner
+```
+
+The first run may show npm's package prompt:
+
+```text
+Need to install the following packages:
+github:hapwi/codex-cleaner
+Ok to proceed? (y)
+```
+
+Answer `y`, or skip npm's prompt with:
+
+```bash
+npx --yes hapwi/codex-cleaner
+```
+
+After install or update, start a new Codex chat and invoke:
+
+```text
+$codex-cleaner
+```
+
+## Use In Codex
+
+Inside Codex:
+
+```text
+$codex-cleaner
+```
+
+The skill runs the `codex-cleaner-run` command through `npx`, asks the runner for structured JSON, then turns the result into a guided cleanup menu in chat.
+
+Codex may ask for approval because the runner fetches public GitHub package code and audits private local Codex state. That is expected. The audit is read-only, and cleanup still requires an explicit follow-up choice.
+
+## Update
+
+Run the same bootstrap command any time:
+
+```bash
+npx hapwi/codex-cleaner
+```
+
+It checks the installed skill version and updates it when needed. Codex Cleaner also writes safe installer metadata here:
 
 ```text
 ~/.hapwicleaner/install.json
 ```
 
-That file contains only Codex Cleaner install metadata: package version, skill version, skill path, runner mode, and timestamps. It does not contain Codex chats, logs, sessions, or other `~/.codex` state.
+That file contains only Codex Cleaner metadata: package version, skill version, skill path, runner mode, and timestamps. It does not contain Codex chats, logs, sessions, or other `~/.codex` state.
 
-Inside Codex, the runner can also fetch this public GitHub metadata endpoint to see whether GitHub has a newer published release:
+When `$codex-cleaner` runs, the runner checks:
 
 ```text
+~/.hapwicleaner/install.json
 https://api.github.com/repos/hapwi/codex-cleaner/releases/latest
 ```
 
-If the remote version is newer than the safe local manifest, the runner stops before auditing and tells the user to run `npx hapwi/codex-cleaner`.
-
-## Releases
-
-Pushing a version tag creates or updates a GitHub Release automatically:
+If the latest GitHub Release is newer than the installed manifest, it stops before auditing and tells the user to run:
 
 ```bash
-git tag v0.0.8
-git push origin v0.0.8
+npx hapwi/codex-cleaner
 ```
-
-The runner checks the latest GitHub Release, not raw `main`, when deciding whether the installed skill is current.
 
 ## What It Cleans
 
@@ -103,7 +96,7 @@ The runner checks the latest GitHub Release, not raw `main`, when deciding wheth
 | Project config | Removes saved entries for missing/temp folders | Does not delete project files |
 | Worktrees | Moves stale Codex worktrees out of the active folder | Does not touch normal project folders |
 
-## Terminal Commands
+## Terminal Usage
 
 Read-only audit:
 
@@ -127,32 +120,62 @@ Structured output for Codex agents:
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run audit --json
 ```
 
-Version/status checks:
+Version/status:
 
 ```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner version
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner skill-status
+npx --yes hapwi/codex-cleaner version
+npx --yes hapwi/codex-cleaner skill-status
 ```
 
-## Codex Skill Flow
+## Skill Standardization Pattern
 
-The bundled `$codex-cleaner` skill keeps the chat experience simple:
+Codex Cleaner is intended to model a repeatable way to ship Codex skills:
+
+| Layer | Responsibility |
+|---|---|
+| Bootstrap command | `npx hapwi/codex-cleaner` installs, updates, and records safe metadata |
+| Installed skill | `~/.agents/skills/codex-cleaner/SKILL.md` gives Codex the workflow |
+| Runner command | `codex-cleaner-run` performs the actual audit or cleanup action |
+| Safe manifest | `~/.hapwicleaner/install.json` tracks installed version state without reading private Codex data |
+| GitHub Release | `releases/latest` is the public source of truth for latest stable version |
+
+This separates installation, skill routing, runtime execution, and version detection. The same pattern can be reused for other skills:
 
 ```text
-User invokes $codex-cleaner
-  -> Codex runs codex-cleaner-run through npx
-  -> Codex explains the cleanup menu in chat
-  -> User picks an action
-  -> Codex runs only the approved cleanup command
+npx owner/tool
+  -> install/update ~/.agents/skills/tool
+  -> write ~/.tool/install.json
+  -> skill calls tool-run
+  -> runner checks latest GitHub Release
+  -> runner blocks if local install is stale
 ```
 
-The skill is intentionally thin. The CLI is the source of truth, so terminal users and Codex users get the same cleanup behavior.
+The goal is a consistent skill lifecycle: install with one command, invoke naturally in Codex, keep runtime behavior versioned, and give users a clear update path.
 
-Every CLI run reports the CLI version and skill version. JSON mode includes the same data under `version`, so the Codex skill can show the exact version it used at the bottom of its chat response.
+## Releases
 
-## Safety First
+Pushing a version tag creates or updates a GitHub Release automatically:
 
-Codex Cleaner is designed around boring, reversible operations:
+```bash
+git tag v0.0.9
+git push origin v0.0.9
+```
+
+The runner checks the latest GitHub Release, not raw `main`, when deciding whether the installed skill is current.
+
+Plain GitHub `npx` still pulls the default branch:
+
+```bash
+npx hapwi/codex-cleaner
+```
+
+So `main` should track the latest released code. For a pinned install, use:
+
+```bash
+npx hapwi/codex-cleaner#v0.0.9
+```
+
+## Safety
 
 - Audit mode is read-only by default.
 - Cleanup requires an explicit command or user approval.
@@ -161,20 +184,6 @@ Codex Cleaner is designed around boring, reversible operations:
 - Recent chats are protected during age-based cleanup.
 - Log contents are treated as private.
 - Archives are not automatically deleted.
-
-## Install Only The Skill
-
-From a local checkout:
-
-```bash
-node ./bin/codex-cleaner.js install-skill
-```
-
-Or after publishing/pushing:
-
-```bash
-npx --yes --package github:hapwi/codex-cleaner codex-cleaner install-skill
-```
 
 ## Development
 

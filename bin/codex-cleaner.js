@@ -21,7 +21,7 @@ function usage() {
   console.log(`Codex Cleaner
 
 Usage:
-  codex-cleaner                         Check/install/update the Codex skill
+  codex-cleaner                         Check the skill version, then audit when current
   codex-cleaner --yes                   Install/update the skill without prompting
   codex-cleaner install-skill [--force] Install the bundled $codex-cleaner skill
   codex-cleaner skill-status            Show whether the $codex-cleaner skill is installed
@@ -125,6 +125,13 @@ function printCodexStartMessage(status) {
   printVersionFooter();
 }
 
+function printCurrentSkillMessage() {
+  const versions = versionInfo();
+  console.log(`$${skillName} skill is current at ${skillPath}`);
+  console.log(`installed skill version: ${versions.installedSkill || "unknown"}`);
+  console.log("");
+}
+
 function runPython(pythonArgs, options = {}) {
   const json = options.json === true;
   if (!fs.existsSync(pythonScript)) {
@@ -185,7 +192,6 @@ async function bootstrap(args) {
   const yes = removeFlag(force.args, "--yes");
   if (installedSkill() && !force.present) {
     const versions = versionInfo();
-    let status = "is installed";
     if (versions.installedSkill !== versions.bundledSkill) {
       const installed = versions.installedSkill || "unknown";
       const prompt = `Update the $${skillName} skill from v${installed} to v${versions.bundledSkill}?`;
@@ -201,15 +207,16 @@ async function bootstrap(args) {
         if (code !== 0) {
           return code;
         }
-        status = "updated";
+        printCodexStartMessage("updated");
+        return 0;
       } else {
         console.log("No changes made.");
         printCodexStartMessage("is still installed");
         return 0;
       }
     }
-    printCodexStartMessage(status);
-    return 0;
+    printCurrentSkillMessage();
+    return runPython(yes.args, { json: false });
   }
 
   if (!process.stdin.isTTY && !yes.present) {

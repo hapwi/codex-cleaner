@@ -56,7 +56,7 @@ $codex-cleaner
 
 If the skill is already installed but the bundled GitHub version is newer, the bootstrap command prompts before replacing the local skill file.
 
-The bootstrap command does not run the audit immediately after installing or updating the skill. The audit runs inside Codex when you invoke `$codex-cleaner`.
+If the installed skill is already current, the bootstrap command runs a read-only audit immediately. The audit also runs inside Codex when you invoke `$codex-cleaner`.
 
 ## What It Cleans
 

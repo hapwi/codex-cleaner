@@ -21,7 +21,7 @@ function usage() {
   console.log(`Codex Cleaner
 
 Usage:
-  codex-cleaner                         Check/install the Codex skill, then audit if installed
+  codex-cleaner                         Check/install/update the Codex skill
   codex-cleaner --yes                   Install/update the skill without prompting
   codex-cleaner install-skill [--force] Install the bundled $codex-cleaner skill
   codex-cleaner skill-status            Show whether the $codex-cleaner skill is installed
@@ -111,6 +111,20 @@ function runSkillInstaller(args = []) {
   return result.status ?? 1;
 }
 
+function printCodexStartMessage(status) {
+  const versions = versionInfo();
+  console.log("");
+  console.log(`$${skillName} skill ${status} at ${skillPath}`);
+  console.log(`installed skill version: ${versions.installedSkill || "unknown"}`);
+  console.log("");
+  console.log("Next step:");
+  console.log("1. Start a new Codex chat so the skill registry reloads.");
+  console.log(`2. Invoke $${skillName}.`);
+  console.log("");
+  console.log("Codex Cleaner will run the audit inside that chat and show the cleanup menu there.");
+  printVersionFooter();
+}
+
 function runPython(pythonArgs, options = {}) {
   const json = options.json === true;
   if (!fs.existsSync(pythonScript)) {
@@ -171,6 +185,7 @@ async function bootstrap(args) {
   const yes = removeFlag(force.args, "--yes");
   if (installedSkill() && !force.present) {
     const versions = versionInfo();
+    let status = "is installed";
     if (versions.installedSkill !== versions.bundledSkill) {
       const installed = versions.installedSkill || "unknown";
       const prompt = `Update the $${skillName} skill from v${installed} to v${versions.bundledSkill}?`;
@@ -186,12 +201,15 @@ async function bootstrap(args) {
         if (code !== 0) {
           return code;
         }
+        status = "updated";
+      } else {
+        console.log("No changes made.");
+        printCodexStartMessage("is still installed");
+        return 0;
       }
     }
-    console.log(`$${skillName} skill is installed at ${skillPath}`);
-    console.log(`installed skill version: ${versionInfo().installedSkill || "unknown"}`);
-    console.log("");
-    return runPython(yes.args, { json: false });
+    printCodexStartMessage(status);
+    return 0;
   }
 
   if (!process.stdin.isTTY && !yes.present) {
@@ -206,7 +224,12 @@ async function bootstrap(args) {
     return 0;
   }
 
-  return runSkillInstaller(force.present ? ["--force"] : []);
+  const code = runSkillInstaller(force.present ? ["--force"] : []);
+  if (code !== 0) {
+    return code;
+  }
+  printCodexStartMessage("installed");
+  return 0;
 }
 
 function mapCommand(command, args) {

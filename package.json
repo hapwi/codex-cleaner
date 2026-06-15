@@ -1,6 +1,6 @@
 {
   "name": "codex-cleaner",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Audit and safely clean local Codex app state from the terminal or a Codex skill.",
   "license": "MIT",
   "bin": {

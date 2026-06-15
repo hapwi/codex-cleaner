@@ -61,6 +61,8 @@ The default `$codex-cleaner` experience is a Codex-native control panel:
 Health: Needs cleanup
 Recommended: run safe reset
 Protected: pinned chats, memories, skills, plugins, credentials, and normal project folders
+Findings: one row per cleanup area with count, size, and recommended reply
+Size impact: active Codex state moved vs. Mac disk space freed now
 ```
 
 Common replies:
@@ -126,6 +128,14 @@ npx hapwi/codex-cleaner
 | `sidebar-cleanup` | A crowded Codex sidebar | Archives old non-pinned chats only |
 | `storage-cleanup` | Local Codex storage | Archives old non-pinned chats, archives stale worktrees, rotates logs if free |
 | `deep-archive` | A nearly empty sidebar | Archives all non-pinned chats, prunes stale projects, archives stale worktrees, rotates logs if free |
+
+Audit output includes a size impact preview before anything changes. It separates:
+
+- active Codex state moved into archives
+- projected active footprint after cleanup
+- Mac disk space freed immediately
+
+Because Codex Cleaner keeps restore copies, most cleanup actions reduce active Codex clutter but free `0B` of Mac disk space immediately. Archives can be reviewed separately before any permanent deletion.
 
 ## Terminal Usage
 
@@ -205,8 +215,8 @@ The goal is a consistent skill lifecycle: install with one command, invoke natur
 Pushing a version tag creates or updates a GitHub Release automatically:
 
 ```bash
-git tag v0.0.10
-git push origin v0.0.10
+git tag v0.0.11
+git push origin v0.0.11
 ```
 
 The runner checks the latest GitHub Release, not raw `main`, when deciding whether the installed skill is current.
@@ -220,7 +230,7 @@ npx hapwi/codex-cleaner
 So `main` should track the latest released code. For a pinned install, use:
 
 ```bash
-npx hapwi/codex-cleaner#v0.0.10
+npx hapwi/codex-cleaner#v0.0.11
 ```
 
 ## Safety

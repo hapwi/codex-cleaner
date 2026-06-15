@@ -3,7 +3,7 @@ name: codex-cleaner
 description: "Use when the user invokes $codex-cleaner or asks to audit, explain, archive, rotate, restore, or clean local Codex Desktop or Codex CLI state. This skill runs the open-source codex-cleaner npx runner and presents a guided Codex cleanup control panel in chat."
 metadata:
   short-description: "Guided Codex cleanup, history, and restore"
-  version: "0.0.10"
+  version: "0.0.11"
 ---
 
 # Codex Cleaner
@@ -43,11 +43,25 @@ Protected: pinned chats, memories, skills, plugins, credentials, and normal proj
 Then show:
 
 1. Recommended cleanup preset.
-2. Advanced individual actions.
-3. History and restore options.
-4. Version footer.
+2. Findings, with one line per detected cleanup area.
+3. Size impact preview with projected active-state and disk-space changes.
+4. Current state details.
+5. Advanced individual actions.
+6. History and restore options.
+7. Version footer.
 
-Keep the user-facing wording concise. Explain impact, not implementation details. Do not paste raw stdout or raw JSON unless the user asks.
+Preserve the useful detail from the runner output. The audit response must include sizes and projected changes from the runner, especially:
+
+- `Findings`
+- `Size Impact Preview`
+- `Current State`
+- `Cleanup Presets`
+- `Advanced Cleanup`
+- `Log Rotation Wait Step` when present
+- `Stale Project Entries` when present
+- `Safety Notes`
+
+Hide only the noisy `Commands Behind The Menu` section unless the user explicitly asks for commands. Do not paste raw JSON unless the user asks.
 
 ## Cleanup Presets
 
@@ -148,8 +162,9 @@ Only run restore after the user clearly chooses it. Restore changes local Codex 
 - Never run cleanup without user approval.
 - Never run deep archive or restore from a vague "clean it up" request; ask for or infer a specific clear choice from the immediately preceding audit menu.
 - Treat `logs_2.sqlite` as private. Do not print raw log bodies.
-- Summarize the CLI JSON output for the user. Do not dump raw JSON unless the user asks.
-- End every audit, history, restore, or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.10 | skill v0.0.10`.
+- Summarize the CLI JSON envelope, but preserve the runner's human-readable audit/detail tables. Do not dump raw JSON unless the user asks.
+- Always distinguish active Codex state moved into archives from Mac disk space actually freed. Archive-based cleanup usually frees `0B` immediately because restore copies stay on disk.
+- End every audit, history, restore, or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.11 | skill v0.0.11`.
 - After cleanup or restore, tell the user the action finished and recommend quitting/reopening Codex so the already-open UI reloads local state. A Mac restart is not needed.
 
 ## Chat Format

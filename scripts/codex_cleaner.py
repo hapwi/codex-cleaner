@@ -56,9 +56,12 @@ class StateSnapshot:
     log_open: bool
     stale_projects: int
     stale_worktrees: int
+    stale_worktree_storage: int
     active_older_than_24h: int
     archive_old_candidates: int
     archive_all_candidates: int
+    archive_old_candidate_storage: int
+    archive_all_candidate_storage: int
 
 
 @dataclass
@@ -193,6 +196,29 @@ def cleanup_health(snapshot: StateSnapshot) -> tuple[str, str]:
     if snapshot.log_storage > 0:
         return "Light cleanup available", "Only log rotation appears useful right now."
     return "Clean", "No obvious Codex clutter was found."
+
+
+def active_cleanup_footprint(snapshot: StateSnapshot) -> int:
+    return snapshot.active_session_storage + snapshot.log_storage + snapshot.stale_worktree_storage
+
+
+def candidate_session_storage(rows: list[ThreadRow], pinned: set[str], cutoff: int | None = None) -> int:
+    total = 0
+    for row in rows:
+        if row.thread_id in pinned:
+            continue
+        age_time = thread_age_time(row)
+        if cutoff is not None and (age_time is None or int(age_time) >= cutoff):
+            continue
+        if not row.rollout_path:
+            continue
+        path = Path(row.rollout_path)
+        try:
+            if path.exists() and path.is_file():
+                total += path.stat().st_size
+        except OSError:
+            pass
+    return total
 
 
 def delta_number(before: int, after: int) -> str:
@@ -438,25 +464,140 @@ def print_presets(snapshot: StateSnapshot, effective_days: int) -> None:
             [
                 "run safe reset",
                 "Normal cleanup",
-                f"Old chats >{effective_days}d, stale projects, stale worktrees, logs if free",
+                f"{human_size(snapshot.archive_old_candidate_storage + snapshot.log_storage + snapshot.stale_worktree_storage)} moved out of active state",
             ],
             [
                 "run sidebar cleanup",
                 "A busy Codex sidebar",
-                f"{snapshot.archive_old_candidates} old non-pinned chat(s)",
+                f"{snapshot.archive_old_candidates} old non-pinned chat(s), {human_size(snapshot.archive_old_candidate_storage)}",
             ],
             [
                 "run storage cleanup",
                 "Local Codex storage",
-                f"Old chats >{effective_days}d, stale worktrees, {human_size(snapshot.log_storage)} logs if free",
+                f"{human_size(snapshot.archive_old_candidate_storage + snapshot.log_storage + snapshot.stale_worktree_storage)} moved out of active state",
             ],
             [
                 "run deep archive",
                 "Nearly empty sidebar",
-                f"{snapshot.archive_all_candidates} non-pinned chat(s), stale projects, stale worktrees, logs if free",
+                f"{snapshot.archive_all_candidates} chats, {human_size(snapshot.archive_all_candidate_storage + snapshot.log_storage + snapshot.stale_worktree_storage)} moved",
             ],
         ],
     )
+
+
+def print_size_impact_preview(snapshot: StateSnapshot, effective_days: int) -> None:
+    active_now = active_cleanup_footprint(snapshot)
+    safe_reset_moved = snapshot.archive_old_candidate_storage + snapshot.log_storage + snapshot.stale_worktree_storage
+    sidebar_moved = snapshot.archive_old_candidate_storage
+    storage_moved = snapshot.archive_old_candidate_storage + snapshot.log_storage + snapshot.stale_worktree_storage
+    deep_moved = snapshot.archive_all_candidate_storage + snapshot.log_storage + snapshot.stale_worktree_storage
+    log_note = "logs move when free" if snapshot.log_open else "logs free now"
+    render_table(
+        ["Reply", "Active Codex Footprint Now", "Moved Out Of Active State", "Active Footprint After", "Mac Disk Freed Now"],
+        [
+            [
+                "run safe reset",
+                human_size(active_now),
+                f"{human_size(safe_reset_moved)} ({log_note})",
+                human_size(max(active_now - safe_reset_moved, 0)),
+                "0B; archives are retained",
+            ],
+            [
+                "run sidebar cleanup",
+                human_size(active_now),
+                human_size(sidebar_moved),
+                human_size(max(active_now - sidebar_moved, 0)),
+                "0B; archives are retained",
+            ],
+            [
+                "run storage cleanup",
+                human_size(active_now),
+                f"{human_size(storage_moved)} ({log_note})",
+                human_size(max(active_now - storage_moved, 0)),
+                "0B; archives are retained",
+            ],
+            [
+                "run deep archive",
+                human_size(active_now),
+                f"{human_size(deep_moved)} ({log_note})",
+                human_size(max(active_now - deep_moved, 0)),
+                "0B; archives are retained",
+            ],
+            [
+                f"archive old chats {effective_days} days",
+                human_size(active_now),
+                human_size(snapshot.archive_old_candidate_storage),
+                human_size(max(active_now - snapshot.archive_old_candidate_storage, 0)),
+                "0B; archives are retained",
+            ],
+            [
+                "rotate logs",
+                human_size(active_now),
+                f"{human_size(snapshot.log_storage)} ({log_note})",
+                human_size(max(active_now - snapshot.log_storage, 0)),
+                "0B; logs are archived",
+            ],
+        ],
+    )
+
+
+def print_findings(snapshot: StateSnapshot, effective_days: int) -> None:
+    rows = []
+    if snapshot.archive_old_candidates:
+        rows.append(
+            [
+                "Old active chats",
+                f"{snapshot.archive_old_candidates} chat(s), {human_size(snapshot.archive_old_candidate_storage)}",
+                f"archive old chats {effective_days} days",
+                "Moves matching sessions to archived_sessions; pinned and recent chats stay active",
+            ]
+        )
+    if snapshot.log_storage:
+        rows.append(
+            [
+                "Log database",
+                f"{human_size(snapshot.log_storage)} ({'open now' if snapshot.log_open else 'free now'})",
+                "rotate logs",
+                "Moves logs_2.sqlite files to archived_logs; Codex creates a fresh DB later",
+            ]
+        )
+    if snapshot.stale_projects:
+        rows.append(
+            [
+                "Stale project shortcuts",
+                f"{snapshot.stale_projects} config entr{'y' if snapshot.stale_projects == 1 else 'ies'}",
+                "prune stale projects",
+                "Forgets missing/temp paths in Codex config; does not delete project folders",
+            ]
+        )
+    if snapshot.stale_worktrees:
+        rows.append(
+            [
+                "Stale Codex worktrees",
+                f"{snapshot.stale_worktrees} folder(s), {human_size(snapshot.stale_worktree_storage)}",
+                "archive stale worktrees",
+                "Moves old temporary Codex worktrees to archived_worktrees",
+            ]
+        )
+    if snapshot.archived_session_storage:
+        rows.append(
+            [
+                "Existing chat archives",
+                human_size(snapshot.archived_session_storage),
+                "show cleanup history",
+                "Restore storage already on disk; not deleted automatically",
+            ]
+        )
+    if not rows:
+        rows.append(
+            [
+                "No active cleanup findings",
+                "0B",
+                "none",
+                "No old chats, stale projects, stale worktrees, or logs need cleanup",
+            ]
+        )
+    render_table(["Finding", "Amount", "Recommended Reply", "What Happens"], rows)
 
 
 def print_history(root: Path, limit: int) -> None:
@@ -573,6 +714,8 @@ def collect_state(home: Path, args: argparse.Namespace) -> tuple[StateSnapshot, 
     active_older_than_24h = 0
     archive_old_count = 0
     archive_all_count = 0
+    archive_old_storage = 0
+    archive_all_storage = 0
     active_projectless_count = 0
     active_projectless_unpinned_count = 0
     effective_days = max(args.archive_older_than_days, MIN_ARCHIVE_OLD_DAYS)
@@ -597,6 +740,8 @@ def collect_state(home: Path, args: argparse.Namespace) -> tuple[StateSnapshot, 
             if row.thread_id not in pinned and (thread_age_time(row) or now) < archive_old_cutoff
         )
         archive_all_count = sum(1 for row in active_rows if row.thread_id not in pinned)
+        archive_old_storage = candidate_session_storage(active_rows, pinned, archive_old_cutoff)
+        archive_all_storage = candidate_session_storage(active_rows, pinned)
         conn.close()
 
     sessions = home / "sessions"
@@ -606,6 +751,7 @@ def collect_state(home: Path, args: argparse.Namespace) -> tuple[StateSnapshot, 
     worktrees = home / "worktrees"
     cutoff = time.time() - args.worktree_older_than_days * 86400
     stale_worktrees = [p for p in worktrees.iterdir() if p.is_dir() and p.stat().st_mtime < cutoff] if worktrees.exists() else []
+    stale_worktree_storage = sum(size_bytes(path) for path in stale_worktrees)
 
     snapshot = StateSnapshot(
         thread_db_found=state.exists(),
@@ -622,9 +768,12 @@ def collect_state(home: Path, args: argparse.Namespace) -> tuple[StateSnapshot, 
         log_open=files_open(log_paths),
         stale_projects=len(stale_projects),
         stale_worktrees=len(stale_worktrees),
+        stale_worktree_storage=stale_worktree_storage,
         active_older_than_24h=active_older_than_24h,
         archive_old_candidates=archive_old_count,
         archive_all_candidates=archive_all_count,
+        archive_old_candidate_storage=archive_old_storage,
+        archive_all_candidate_storage=archive_all_storage,
     )
     return snapshot, stale_projects, stale_worktrees
 
@@ -638,13 +787,14 @@ def print_state_table(snapshot: StateSnapshot, effective_days: int) -> None:
             ["Not in folders", f"{snapshot.active_projectless_threads} active / {snapshot.active_projectless_unpinned_threads} archivable", "Projectless chats from the Codex sidebar state"],
             ["Pinned", str(snapshot.pinned_threads), "Never archived by codex-cleaner"],
             ["Recent protection", f"{snapshot.active_older_than_24h} active older than 24h", "Chats newer than 24h stay active unless all-clear is chosen"],
-            ["Old-chat candidates", str(snapshot.archive_old_candidates), f"Non-pinned active chats older than {effective_days} day(s)"],
-            ["All-chat candidates", str(snapshot.archive_all_candidates), "All non-pinned active chats"],
+            ["Old-chat candidates", f"{snapshot.archive_old_candidates} / {human_size(snapshot.archive_old_candidate_storage)}", f"Non-pinned active chats older than {effective_days} day(s)"],
+            ["All-chat candidates", f"{snapshot.archive_all_candidates} / {human_size(snapshot.archive_all_candidate_storage)}", "All non-pinned active chats"],
             ["Active sessions", human_size(snapshot.active_session_storage), "~/.codex/sessions"],
             ["Archived sessions", human_size(snapshot.archived_session_storage), "~/.codex/archived_sessions"],
             ["Log database", human_size(snapshot.log_storage), "Open now" if snapshot.log_open else "Closed"],
             ["Stale projects", str(snapshot.stale_projects), "Saved config entries for missing/temp folders"],
-            ["Stale worktrees", str(snapshot.stale_worktrees), "Old folders under ~/.codex/worktrees"],
+            ["Stale worktrees", f"{snapshot.stale_worktrees} / {human_size(snapshot.stale_worktree_storage)}", "Old folders under ~/.codex/worktrees"],
+            ["Active cleanup footprint", human_size(active_cleanup_footprint(snapshot)), "Active sessions + logs + stale worktrees"],
         ],
     )
 
@@ -661,8 +811,15 @@ def print_delta_table(before: StateSnapshot, after: StateSnapshot) -> None:
             ["Log database", human_size(before.log_storage), human_size(after.log_storage), delta_size(before.log_storage, after.log_storage)],
             ["Stale project entries", str(before.stale_projects), str(after.stale_projects), delta_number(before.stale_projects, after.stale_projects)],
             ["Stale worktrees", str(before.stale_worktrees), str(after.stale_worktrees), delta_number(before.stale_worktrees, after.stale_worktrees)],
+            ["Stale worktree storage", human_size(before.stale_worktree_storage), human_size(after.stale_worktree_storage), delta_size(before.stale_worktree_storage, after.stale_worktree_storage)],
+            ["Active cleanup footprint", human_size(active_cleanup_footprint(before)), human_size(active_cleanup_footprint(after)), delta_size(active_cleanup_footprint(before), active_cleanup_footprint(after))],
+            ["Mac disk space freed now", "0B", "0B", "0B"],
         ],
     )
+    print("")
+    print("Disk Space Note")
+    print("---------------")
+    print("Codex Cleaner archives by default. That reduces active Codex state, but it does not immediately free Mac disk space because the restore copies stay on disk.")
 
 
 def audit(args: argparse.Namespace, home: Path) -> None:
@@ -689,10 +846,15 @@ def audit(args: argparse.Namespace, home: Path) -> None:
             ["Active sessions", human_size(snapshot.active_session_storage)],
             ["Log database", f"{human_size(snapshot.log_storage)} ({'open' if snapshot.log_open else 'free'})"],
             ["Stale projects", str(snapshot.stale_projects)],
-            ["Stale worktrees", str(snapshot.stale_worktrees)],
+            ["Stale worktrees", f"{snapshot.stale_worktrees} / {human_size(snapshot.stale_worktree_storage)}"],
+            ["Active cleanup footprint", human_size(active_cleanup_footprint(snapshot))],
             ["Last cleanup", human_time(latest_cleanup.created_at) if latest_cleanup else "none found"],
         ],
     )
+    print("")
+    print("Findings")
+    print("--------")
+    print_findings(snapshot, effective_days)
     print("")
     print("Recommended")
     print("-----------")
@@ -710,6 +872,11 @@ def audit(args: argparse.Namespace, home: Path) -> None:
         print("run safe reset")
         print("")
         print("Safe reset archives old non-pinned chats, prunes stale Codex project shortcuts, archives stale Codex worktrees, and rotates logs only if the log database is free.")
+    print("")
+    print("Size Impact Preview")
+    print("-------------------")
+    print("These are projected changes before cleanup. Archive-based cleanup moves data out of active Codex state; it does not delete the restore copy.")
+    print_size_impact_preview(snapshot, effective_days)
     print("")
     print("Cleanup Presets")
     print("---------------")
@@ -742,12 +909,12 @@ def audit(args: argparse.Namespace, home: Path) -> None:
         [
             [
                 f"archive old chats {effective_days} days",
-                f"{snapshot.archive_old_candidates} non-pinned chat(s) older than {effective_days} day(s)",
+                f"{snapshot.archive_old_candidates} non-pinned chat(s), {human_size(snapshot.archive_old_candidate_storage)} older than {effective_days} day(s)",
                 "Pinned + chats from last 24h",
             ],
             [
                 "archive all chats",
-                f"{snapshot.archive_all_candidates} non-pinned chat(s), including recent ones",
+                f"{snapshot.archive_all_candidates} non-pinned chat(s), {human_size(snapshot.archive_all_candidate_storage)}, including recent ones",
                 "Pinned chats only",
             ],
             [
@@ -762,7 +929,7 @@ def audit(args: argparse.Namespace, home: Path) -> None:
             ],
             [
                 "archive stale worktrees",
-                f"{snapshot.stale_worktrees} old Codex worktree folder(s)",
+                f"{snapshot.stale_worktrees} old Codex worktree folder(s), {human_size(snapshot.stale_worktree_storage)}",
                 "Normal project folders",
             ],
         ],

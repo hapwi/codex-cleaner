@@ -3,7 +3,7 @@ name: codex-cleaner
 description: "Use when the user invokes $codex-cleaner or asks to audit, explain, archive, rotate, or clean local Codex Desktop or Codex CLI state. This skill runs the open-source codex-cleaner npx command and summarizes the result in chat."
 metadata:
   short-description: "Audit and clean Codex local state safely"
-  version: "0.0.4"
+  version: "0.0.5"
 ---
 
 # Codex Cleaner
@@ -21,6 +21,8 @@ npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run audit --json
 ```
 
 Audit mode is read-only. It must not move files, rotate logs, edit config, or archive chats.
+
+If the runner returns `ok: false` with `error: "codex_cleaner_skill_update_required"`, stop and tell the user to run `npx hapwi/codex-cleaner` in a terminal, then start a new Codex chat and invoke `$codex-cleaner` again. Do not run cleanup commands until the skill is current.
 
 ## Cleanup Commands
 
@@ -63,7 +65,7 @@ npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run archive-stale-w
 - Never run cleanup without user approval.
 - Treat `logs_2.sqlite` as private. Do not print raw log bodies.
 - Summarize the CLI JSON output for the user. Do not dump raw JSON unless the user asks.
-- End every audit or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.4 | skill v0.0.4`.
+- End every audit or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.5 | skill v0.0.5`.
 - After cleanup, tell the user cleanup finished and recommend quitting/reopening Codex so the already-open UI reloads local state. A Mac restart is not needed.
 
 ## Chat Format

@@ -58,6 +58,12 @@ If the skill is already installed but the bundled GitHub version is newer, the b
 
 If the installed skill is already current, the bootstrap command tells you the skill is up to date and shows how to run it in Codex. It does not run the cleaner in your terminal.
 
+The runner command also checks the installed skill version before auditing or cleaning. If the skill is missing or stale, the runner stops and tells you to run:
+
+```bash
+npx hapwi/codex-cleaner
+```
+
 ## What It Cleans
 
 | Area | What Codex Cleaner Does | Safety Guard |

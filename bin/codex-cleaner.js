@@ -18,9 +18,24 @@ const skillFile = path.join(skillPath, "SKILL.md");
 const bundledSkillFile = path.join(repoRoot, "skills", skillName, "SKILL.md");
 const invokedName = path.basename(process.argv[1] || "codex-cleaner");
 const invokedAsRunner = process.env.CODEX_CLEANER_RUNNER === "1" || invokedName === "codex-cleaner-run";
+const useColor = process.env.NO_COLOR !== "1" && process.stdout.isTTY;
+const color = {
+  bold: (value) => (useColor ? `\x1b[1m${value}\x1b[22m` : value),
+  dim: (value) => (useColor ? `\x1b[2m${value}\x1b[22m` : value),
+  cyan: (value) => (useColor ? `\x1b[36m${value}\x1b[39m` : value),
+  green: (value) => (useColor ? `\x1b[32m${value}\x1b[39m` : value),
+  yellow: (value) => (useColor ? `\x1b[33m${value}\x1b[39m` : value),
+  red: (value) => (useColor ? `\x1b[31m${value}\x1b[39m` : value),
+};
+const mark = {
+  ok: useColor ? color.green("✓") : "[ok]",
+  warn: useColor ? color.yellow("!") : "[!]",
+  fail: useColor ? color.red("x") : "[x]",
+  arrow: useColor ? color.cyan("›") : ">",
+};
 
 function usage() {
-  console.log(`Codex Cleaner
+  console.log(`${color.bold(color.cyan("Codex Cleaner"))}
 
 Usage:
   codex-cleaner                         Check/install/update the Codex skill
@@ -35,7 +50,7 @@ Codex agents should run cleanup through:
 }
 
 function runnerUsage() {
-  console.log(`Codex Cleaner Runner
+  console.log(`${color.bold(color.cyan("Codex Cleaner Runner"))}
 
 Usage:
   codex-cleaner-run audit [--json]          Run a read-only audit
@@ -112,26 +127,31 @@ function printVersionFooter() {
   const versions = versionInfo();
   const installed = versions.installedSkill ? `installed skill v${versions.installedSkill}` : "installed skill missing";
   console.log("");
-  console.log(`Codex Cleaner version: CLI v${versions.cli} | bundled skill v${versions.bundledSkill} | ${installed}`);
+  console.log(color.dim(`Codex Cleaner version: CLI v${versions.cli} | bundled skill v${versions.bundledSkill} | ${installed}`));
 }
 
 function runSkillInstaller(args = []) {
   const result = spawnSync("sh", [skillScript, "install", ...args], {
     cwd: repoRoot,
-    stdio: "inherit",
+    encoding: "utf8",
   });
+  if (result.status !== 0) {
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+  }
   return result.status ?? 1;
 }
 
 function printCodexStartMessage(status) {
   const versions = versionInfo();
   console.log("");
-  console.log(`$${skillName} skill ${status} at ${skillPath}`);
-  console.log(`installed skill version: ${versions.installedSkill || "unknown"}`);
+  console.log(`${mark.ok} ${color.bold(`$${skillName} skill ${status}`)}`);
+  console.log(`${mark.arrow} ${color.dim(skillPath)}`);
+  console.log(`${mark.arrow} installed skill version: ${color.bold(versions.installedSkill || "unknown")}`);
   console.log("");
-  console.log("Next step:");
-  console.log("1. Start a new Codex chat so the skill registry reloads.");
-  console.log(`2. Invoke $${skillName}.`);
+  console.log(color.bold("Next step"));
+  console.log(`${mark.arrow} Start a new Codex chat so the skill registry reloads.`);
+  console.log(`${mark.arrow} Invoke ${color.bold(`$${skillName}`)}.`);
   console.log("");
   console.log("Codex Cleaner will run the audit inside that chat and show the cleanup menu there.");
   printVersionFooter();
@@ -139,14 +159,55 @@ function printCodexStartMessage(status) {
 
 function printCurrentSkillMessage() {
   const versions = versionInfo();
-  console.log(`$${skillName} skill is up to date at ${skillPath}`);
-  console.log(`installed skill version: ${versions.installedSkill || "unknown"}`);
+  console.log(`${mark.ok} ${color.bold(`$${skillName} skill is up to date`)}`);
+  console.log(`${mark.arrow} ${color.dim(skillPath)}`);
+  console.log(`${mark.arrow} installed skill version: ${color.bold(versions.installedSkill || "unknown")}`);
   console.log("");
-  console.log("Next step:");
-  console.log("Start a new Codex chat and invoke $codex-cleaner.");
+  console.log(color.bold("Next step"));
+  console.log(`${mark.arrow} Start a new Codex chat and invoke ${color.bold("$codex-cleaner")}.`);
   console.log("");
   console.log("The installed skill will run the cleaner through codex-cleaner-run inside that chat.");
   printVersionFooter();
+}
+
+function runnerBlockMessage(versions) {
+  if (!versions.installedSkill) {
+    return `$${skillName} is not installed. Run npx hapwi/codex-cleaner in a terminal, then start a new Codex chat and invoke $${skillName}.`;
+  }
+  return `$${skillName} is stale. Installed skill v${versions.installedSkill}; latest bundled skill v${versions.bundledSkill}. Run npx hapwi/codex-cleaner in a terminal to update, then start a new Codex chat and invoke $${skillName}.`;
+}
+
+function verifyRunnerSkill(json) {
+  const versions = versionInfo();
+  if (versions.installedSkill && versions.installedSkill === versions.bundledSkill) {
+    return 0;
+  }
+
+  const message = runnerBlockMessage(versions);
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: false,
+          error: "codex_cleaner_skill_update_required",
+          message,
+          actionRequired: "Run npx hapwi/codex-cleaner in a terminal, then start a new Codex chat and invoke $codex-cleaner.",
+          exitCode: 2,
+          version: versions,
+        },
+        null,
+        2,
+      ),
+    );
+    return 2;
+  }
+
+  console.error(`${mark.fail} ${color.bold("Codex Cleaner skill update required")}`);
+  console.error(`${mark.arrow} ${message}`);
+  console.error("");
+  console.error(`${mark.arrow} Run: ${color.bold("npx hapwi/codex-cleaner")}`);
+  printVersionFooter();
+  return 2;
 }
 
 function runPython(pythonArgs, options = {}) {
@@ -333,6 +394,10 @@ async function main() {
       runnerUsage();
       return 2;
     }
+    const runnerStatus = verifyRunnerSkill(mapped.json);
+    if (runnerStatus !== 0) {
+      return runnerStatus;
+    }
     return runPython(mapped.pythonArgs, { json: mapped.json });
   }
 
@@ -342,29 +407,37 @@ async function main() {
 
   if (command === "install-skill") {
     const force = removeFlag(rest, "--force");
-    return runSkillInstaller(force.present ? ["--force"] : []);
+    const code = runSkillInstaller(force.present ? ["--force"] : []);
+    if (code !== 0) {
+      return code;
+    }
+    printCodexStartMessage(force.present ? "updated" : "installed");
+    return 0;
   }
 
   if (command === "version") {
     const versions = versionInfo();
-    console.log(`codex-cleaner cli v${versions.cli}`);
-    console.log(`bundled skill v${versions.bundledSkill}`);
-    console.log(`installed skill ${versions.installedSkill ? `v${versions.installedSkill}` : "missing"}`);
-    console.log(`installed skill path ${versions.installedSkillPath}`);
+    console.log(`${color.bold(color.cyan("Codex Cleaner"))}`);
+    console.log(`${mark.arrow} CLI v${versions.cli}`);
+    console.log(`${mark.arrow} bundled skill v${versions.bundledSkill}`);
+    console.log(`${mark.arrow} installed skill ${versions.installedSkill ? `v${versions.installedSkill}` : "missing"}`);
+    console.log(`${mark.arrow} ${color.dim(versions.installedSkillPath)}`);
     return 0;
   }
 
   if (command === "skill-status") {
     const versions = versionInfo();
     if (installedSkill()) {
-      console.log(`installed ${skillFile}`);
-      console.log(`installed skill version: ${versions.installedSkill || "unknown"}`);
-      console.log(`bundled skill version: ${versions.bundledSkill}`);
-      console.log(`status: ${versions.installedSkill === versions.bundledSkill ? "current" : "stale"}`);
+      const current = versions.installedSkill === versions.bundledSkill;
+      console.log(`${current ? mark.ok : mark.warn} $${skillName} ${current ? "is current" : "needs update"}`);
+      console.log(`${mark.arrow} installed skill version: ${versions.installedSkill || "unknown"}`);
+      console.log(`${mark.arrow} bundled skill version: ${versions.bundledSkill}`);
+      console.log(`${mark.arrow} ${color.dim(skillFile)}`);
       return 0;
     }
-    console.log(`missing ${skillFile}`);
-    console.log(`bundled skill version: ${versions.bundledSkill}`);
+    console.log(`${mark.warn} $${skillName} is not installed`);
+    console.log(`${mark.arrow} bundled skill version: ${versions.bundledSkill}`);
+    console.log(`${mark.arrow} ${color.dim(skillFile)}`);
     return 1;
   }
 

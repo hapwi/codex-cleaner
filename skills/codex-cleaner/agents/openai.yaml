@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Cleaner"
+  short_description: "Audit and clean Codex local state safely"
+  default_prompt: "Use $codex-cleaner to audit Codex local state, explain cleanup options, then apply only the cleanup choices I approve."

@@ -66,6 +66,8 @@ Usage:
   codex-cleaner-run audit [--json]          Run a read-only audit
   codex-cleaner-run history [--json]        Show recent cleanup backups
   codex-cleaner-run last-cleanup [--json]   Show the most recent cleanup backup
+  codex-cleaner-run review-archives [--json] Show archive storage inventory
+  codex-cleaner-run show-restorable-chats [--json] Show restorable chat archives
 
 Cleanup presets:
   codex-cleaner-run safe-reset [--json]
@@ -80,6 +82,8 @@ Advanced cleanup commands:
   codex-cleaner-run rotate-logs [--json]
   codex-cleaner-run archive-stale-worktrees --days 7 [--json]
   codex-cleaner-run restore-last-chat-archive [--json]
+  codex-cleaner-run trash-nonrestorable-archives --days 30 [--json]
+  codex-cleaner-run trash-old-archives --days 30 [--include-chat-archives] [--json]
 
 Advanced:
   codex-cleaner-run raw -- <codex_cleaner.py flags>
@@ -415,10 +419,18 @@ function runPython(pythonArgs, options = {}) {
     return result.status ?? 1;
   }
 
-  const result = spawnSync("python3", [pythonScript, ...pythonArgs], {
+  const reportArgs = [...pythonArgs, "--json-report"];
+  const result = spawnSync("python3", [pythonScript, ...reportArgs], {
     cwd: repoRoot,
     encoding: "utf8",
   });
+  let parsedReport = null;
+  try {
+    parsedReport = JSON.parse(result.stdout || "{}");
+  } catch {
+    parsedReport = null;
+  }
+  const reportFields = parsedReport && typeof parsedReport === "object" ? parsedReport : {};
   console.log(
     JSON.stringify(
       {
@@ -426,7 +438,8 @@ function runPython(pythonArgs, options = {}) {
         command: ["python3", "scripts/codex_cleaner.py", ...pythonArgs],
         exitCode: result.status ?? 1,
         version: versionInfo(),
-        stdout: result.stdout || "",
+        ...reportFields,
+        stdout: reportFields.textReport || result.stdout || "",
         stderr: result.stderr || "",
       },
       null,
@@ -513,6 +526,12 @@ function mapCommand(command, args) {
       return { pythonArgs: ["--history", ...current], json: jsonFlag.present };
     case "last-cleanup":
       return { pythonArgs: ["--history", "--history-limit", "1", ...current], json: jsonFlag.present };
+    case "review-archives":
+    case "show-archive-sizes":
+      return { pythonArgs: ["--review-archives", ...current], json: jsonFlag.present };
+    case "show-restorable-chats":
+    case "restorable-chats":
+      return { pythonArgs: ["--restorable-chats", ...current], json: jsonFlag.present };
     case "safe-reset":
       return { pythonArgs: ["--apply", "--safe-reset", ...current], json: jsonFlag.present };
     case "sidebar-cleanup":
@@ -561,6 +580,36 @@ function mapCommand(command, args) {
     }
     case "restore-last-chat-archive":
       return { pythonArgs: ["--apply", "--restore-last-chat-archive", ...current], json: jsonFlag.present };
+    case "trash-nonrestorable-archives": {
+      const days = takeOption(current, ["--days", "-d"]);
+      current = days.args;
+      return {
+        pythonArgs: [
+          "--apply",
+          "--trash-nonrestorable-archives",
+          "--archive-trash-older-than-days",
+          days.value || "30",
+          ...current,
+        ],
+        json: jsonFlag.present,
+      };
+    }
+    case "trash-old-archives": {
+      const days = takeOption(current, ["--days", "-d"]);
+      const includeChats = removeFlag(days.args, "--include-chat-archives");
+      current = includeChats.args;
+      return {
+        pythonArgs: [
+          "--apply",
+          "--trash-old-archives",
+          "--archive-trash-older-than-days",
+          days.value || "30",
+          ...(includeChats.present ? ["--include-chat-archives"] : []),
+          ...current,
+        ],
+        json: jsonFlag.present,
+      };
+    }
     case "raw": {
       const passthrough = current[0] === "--" ? current.slice(1) : current;
       return { pythonArgs: passthrough, json: jsonFlag.present };

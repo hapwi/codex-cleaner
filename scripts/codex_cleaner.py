@@ -8,6 +8,8 @@ cleanup choices.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import platform
@@ -29,6 +31,7 @@ TEMP_PROJECT_RE = re.compile(
     re.I,
 )
 MIN_ARCHIVE_OLD_DAYS = 1
+DEFAULT_ARCHIVE_TRASH_DAYS = 30
 
 
 @dataclass
@@ -73,6 +76,18 @@ class BackupEntry:
     log_manifests: list[Path]
     worktree_manifests: list[Path]
     project_list: Path | None
+
+
+@dataclass
+class ArchiveCategory:
+    key: str
+    label: str
+    path: Path
+    item_count: int
+    size: int
+    latest_modified: float | None
+    cleanup_reply: str
+    safety_note: str
 
 
 def stamp() -> str:
@@ -186,6 +201,104 @@ def latest_chat_backup(root: Path) -> BackupEntry | None:
         if entry.chat_manifests:
             return entry
     return None
+
+
+def immediate_archive_items(path: Path) -> list[Path]:
+    if not path.exists():
+        return []
+    try:
+        return [item for item in path.iterdir() if item.name.startswith("codex-cleaner-")]
+    except OSError:
+        return []
+
+
+def latest_mtime(items: list[Path]) -> float | None:
+    latest: float | None = None
+    for item in items:
+        try:
+            modified = item.stat().st_mtime
+        except OSError:
+            continue
+        latest = modified if latest is None else max(latest, modified)
+    return latest
+
+
+def archive_categories(home: Path, backup_root: Path) -> list[ArchiveCategory]:
+    session_root = home / "archived_sessions"
+    log_root = home / "archived_logs"
+    worktree_root = home / "archived_worktrees"
+    categories = [
+        (
+            "chat_archives",
+            "Chat archives",
+            session_root,
+            "show restorable chats",
+            "Keep these unless you are sure you do not need local chat restore copies.",
+        ),
+        (
+            "log_archives",
+            "Log archives",
+            log_root,
+            f"trash non-restorable archives {DEFAULT_ARCHIVE_TRASH_DAYS} days",
+            "Usually safe to trash after review; log message bodies are not printed by this tool.",
+        ),
+        (
+            "worktree_archives",
+            "Worktree archives",
+            worktree_root,
+            f"trash non-restorable archives {DEFAULT_ARCHIVE_TRASH_DAYS} days",
+            "Review before trashing if an old temporary checkout may still contain useful work.",
+        ),
+        (
+            "cleaner_backups",
+            "Cleaner backup metadata",
+            backup_root,
+            "show cleanup history",
+            "Needed for one-click chat restore; do not trash blindly.",
+        ),
+    ]
+    output: list[ArchiveCategory] = []
+    for key, label, path, reply, note in categories:
+        items = immediate_archive_items(path)
+        output.append(
+            ArchiveCategory(
+                key=key,
+                label=label,
+                path=path,
+                item_count=len(items),
+                size=size_bytes(path),
+                latest_modified=latest_mtime(items),
+                cleanup_reply=reply,
+                safety_note=note,
+            )
+        )
+    return output
+
+
+def archive_inventory(home: Path, backup_root: Path) -> dict:
+    categories = archive_categories(home, backup_root)
+    backups = backup_entries(backup_root)
+    restorable_chat_backups = [entry for entry in backups if entry.chat_manifests]
+    total_size = sum(category.size for category in categories)
+    return {
+        "totalSizeBytes": total_size,
+        "totalSize": human_size(total_size),
+        "restorableChatBackups": len(restorable_chat_backups),
+        "categories": [
+            {
+                "key": category.key,
+                "label": category.label,
+                "path": str(category.path),
+                "itemCount": category.item_count,
+                "sizeBytes": category.size,
+                "size": human_size(category.size),
+                "latestModified": human_time(category.latest_modified),
+                "cleanupReply": category.cleanup_reply,
+                "safetyNote": category.safety_note,
+            }
+            for category in categories
+        ],
+    }
 
 
 def cleanup_health(snapshot: StateSnapshot) -> tuple[str, str]:
@@ -541,7 +654,7 @@ def print_size_impact_preview(snapshot: StateSnapshot, effective_days: int) -> N
     )
 
 
-def print_findings(snapshot: StateSnapshot, effective_days: int) -> None:
+def print_findings(snapshot: StateSnapshot, effective_days: int, archive_total_size: int = 0) -> None:
     rows = []
     if snapshot.archive_old_candidates:
         rows.append(
@@ -579,13 +692,13 @@ def print_findings(snapshot: StateSnapshot, effective_days: int) -> None:
                 "Moves old temporary Codex worktrees to archived_worktrees",
             ]
         )
-    if snapshot.archived_session_storage:
+    if archive_total_size:
         rows.append(
             [
-                "Existing chat archives",
-                human_size(snapshot.archived_session_storage),
-                "show cleanup history",
-                "Restore storage already on disk; not deleted automatically",
+                "Existing archives",
+                human_size(archive_total_size),
+                "review archives",
+                "Restore storage and prior cleanup archives already on disk; not deleted automatically",
             ]
         )
     if not rows:
@@ -598,6 +711,102 @@ def print_findings(snapshot: StateSnapshot, effective_days: int) -> None:
             ]
         )
     render_table(["Finding", "Amount", "Recommended Reply", "What Happens"], rows)
+
+
+def print_archive_inventory(home: Path, backup_root: Path) -> None:
+    inventory = archive_inventory(home, backup_root)
+    print("Codex Cleaner Archive Review")
+    print("============================")
+    print("Nothing has been changed. This is a read-only archive inventory.")
+    print("")
+    print("Archive Summary")
+    print("---------------")
+    render_table(
+        ["Item", "Value"],
+        [
+            ["Total archive storage", inventory["totalSize"]],
+            ["Restorable chat backups", str(inventory["restorableChatBackups"])],
+            ["Default trash behavior", "Excludes chat restore archives"],
+            ["Trash safety", "Moves to Mac Trash when available; does not permanently delete"],
+        ],
+    )
+    print("")
+    print("Archive Areas")
+    print("-------------")
+    render_table(
+        ["Area", "Items", "Size", "Newest", "Reply", "Safety note"],
+        [
+            [
+                category["label"],
+                str(category["itemCount"]),
+                category["size"],
+                category["latestModified"],
+                category["cleanupReply"],
+                category["safetyNote"],
+            ]
+            for category in inventory["categories"]
+        ],
+    )
+    print("")
+    print("Archive Cleanup Options")
+    print("-----------------------")
+    render_table(
+        ["Reply", "What it does", "Default protection"],
+        [
+            [
+                f"trash non-restorable archives {DEFAULT_ARCHIVE_TRASH_DAYS} days",
+                "Moves old log/worktree archives and backup folders without chat restore manifests to Trash",
+                "Keeps chat archives and restorable chat backups",
+            ],
+            [
+                f"trash old archives {DEFAULT_ARCHIVE_TRASH_DAYS} days",
+                "Moves old non-chat archives to Trash; add 'include chats' only if you mean it",
+                "Keeps chat archives unless include-chat-archives is used",
+            ],
+            [
+                "show restorable chats",
+                "Lists backup folders that can restore archived chats",
+                "Read-only",
+            ],
+            [
+                "show cleanup history",
+                "Lists recent Codex Cleaner backup folders",
+                "Read-only",
+            ],
+        ],
+    )
+    print("")
+    print("Safety Notes")
+    print("------------")
+    print("- Archive cleanup is separate from normal safe reset.")
+    print("- The default archive trash commands avoid chat restore archives.")
+    print("- Trashed archives can usually be recovered from Mac Trash until the Trash is emptied.")
+    print("- Codex Cleaner never permanently deletes archives by default.")
+
+
+def print_restorable_chats(root: Path, limit: int) -> None:
+    entries = [entry for entry in backup_entries(root) if entry.chat_manifests]
+    print("Codex Cleaner Restorable Chats")
+    print("==============================")
+    print(f"Backup root: {root}")
+    print("")
+    if not entries:
+        print("No restorable chat archives were found.")
+        return
+    rows = []
+    for index, entry in enumerate(entries[:limit], start=1):
+        rows.append(
+            [
+                str(index),
+                human_time(entry.created_at),
+                ", ".join(entry.actions) if entry.actions else "unknown",
+                str(entry.chat_manifests[-1]),
+                str(entry.path),
+            ]
+        )
+    render_table(["#", "When", "Actions", "Chat manifest", "Backup folder"], rows)
+    print("")
+    print("Reply with 'restore last chat archive' to restore the newest chat archive.")
 
 
 def print_history(root: Path, limit: int) -> None:
@@ -828,6 +1037,7 @@ def audit(args: argparse.Namespace, home: Path) -> None:
     health, health_note = cleanup_health(snapshot)
     history = backup_entries(Path(args.backup_root).expanduser().resolve())
     latest_cleanup = history[0] if history else None
+    inventory = archive_inventory(home, Path(args.backup_root).expanduser().resolve())
 
     print("Codex Cleaner Audit")
     print("===================")
@@ -854,7 +1064,7 @@ def audit(args: argparse.Namespace, home: Path) -> None:
     print("")
     print("Findings")
     print("--------")
-    print_findings(snapshot, effective_days)
+    print_findings(snapshot, effective_days, inventory["totalSizeBytes"])
     print("")
     print("Recommended")
     print("-----------")
@@ -892,6 +1102,19 @@ def audit(args: argparse.Namespace, home: Path) -> None:
             ["restore last chat archive", "Moves the latest chat archive back into active Codex state"],
         ],
     )
+    print("")
+    print("Archive Management")
+    print("------------------")
+    render_table(
+        ["Area", "Size", "Items", "Recommended Reply"],
+        [
+            [category["label"], category["size"], str(category["itemCount"]), category["cleanupReply"]]
+            for category in inventory["categories"]
+        ],
+    )
+    print("")
+    print(f"Total archive storage: {inventory['totalSize']}. Archive cleanup is separate from normal safe reset and defaults to keeping chat restore archives.")
+    print("Reply with 'review archives' to inspect archive storage before trashing anything.")
     print("")
     print("Current State")
     print("-------------")
@@ -1202,10 +1425,109 @@ def archive_worktrees(home: Path, backup: Path, args: argparse.Namespace) -> Non
     print("")
 
 
+def unique_trash_destination(source: Path) -> Path:
+    trash_root = Path.home() / ".Trash"
+    if not trash_root.exists():
+        trash_root = default_backup_root() / "codex-cleaner-trash"
+    trash_root.mkdir(parents=True, exist_ok=True)
+    dest = trash_root / source.name
+    if not dest.exists():
+        return dest
+    suffix = stamp()
+    return trash_root / f"{source.name}-{suffix}"
+
+
+def move_to_trash(source: Path) -> tuple[Path, int]:
+    item_size = size_bytes(source)
+    dest = unique_trash_destination(source)
+    shutil.move(str(source), str(dest))
+    return dest, item_size
+
+
+def archive_trash_candidates(home: Path, backup_root: Path, args: argparse.Namespace) -> list[tuple[str, Path]]:
+    cutoff = time.time() - max(args.archive_trash_older_than_days, MIN_ARCHIVE_OLD_DAYS) * 86400
+    candidates: list[tuple[str, Path]] = []
+
+    def add_old_items(kind: str, root: Path) -> None:
+        for item in immediate_archive_items(root):
+            try:
+                if item.stat().st_mtime < cutoff:
+                    candidates.append((kind, item))
+            except OSError:
+                continue
+
+    if args.trash_nonrestorable_archives or args.trash_old_archives:
+        add_old_items("log_archive", home / "archived_logs")
+        add_old_items("worktree_archive", home / "archived_worktrees")
+
+    if args.trash_old_archives and args.include_chat_archives:
+        add_old_items("chat_archive", home / "archived_sessions")
+
+    for entry in backup_entries(backup_root):
+        if entry.created_at >= cutoff:
+            continue
+        has_chat_restore = bool(entry.chat_manifests)
+        if has_chat_restore and not args.include_chat_archives:
+            continue
+        if args.trash_nonrestorable_archives and has_chat_restore:
+            continue
+        candidates.append(("cleaner_backup", entry.path))
+
+    return candidates
+
+
+def trash_archives(home: Path, backup: Path, args: argparse.Namespace) -> None:
+    backup_root = Path(args.backup_root).expanduser().resolve()
+    candidates = archive_trash_candidates(home, backup_root, args)
+    manifest = backup / f"trashed-archives-{stamp()}.jsonl"
+    moved = 0
+    total = 0
+    with manifest.open("w", encoding="utf-8") as handle:
+        for kind, source in candidates:
+            if not source.exists():
+                continue
+            dest, item_size = move_to_trash(source)
+            moved += 1
+            total += item_size
+            handle.write(
+                json.dumps(
+                    {
+                        "kind": kind,
+                        "from": str(source),
+                        "to": str(dest),
+                        "bytes": item_size,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    print("Archive Trash Result")
+    print("--------------------")
+    render_table(
+        ["Result", "Value"],
+        [
+            ["Archive folders moved to Trash", str(moved)],
+            ["Archive storage moved to Trash", human_size(total)],
+            ["Chat archives included", "yes" if args.include_chat_archives else "no"],
+            ["Older than", f"{max(args.archive_trash_older_than_days, MIN_ARCHIVE_OLD_DAYS)} day(s)"],
+            ["Manifest", str(manifest)],
+        ],
+    )
+    print("")
+    if moved == 0:
+        print("No matching archive folders were old enough to move to Trash.")
+        print("")
+
+
 def selected_actions(args: argparse.Namespace) -> list[str]:
     actions = []
     if args.restore_last_chat_archive:
         actions.append("restore-last-chat-archive")
+    if args.trash_nonrestorable_archives:
+        actions.append(f"trash-nonrestorable-archives:{max(args.archive_trash_older_than_days, MIN_ARCHIVE_OLD_DAYS)}d")
+    if args.trash_old_archives:
+        suffix = ":include-chat-archives" if args.include_chat_archives else ""
+        actions.append(f"trash-old-archives:{max(args.archive_trash_older_than_days, MIN_ARCHIVE_OLD_DAYS)}d{suffix}")
     if args.archive_all_chats:
         actions.append("archive-all-chats")
     if args.archive_old_chats:
@@ -1222,6 +1544,7 @@ def selected_actions(args: argparse.Namespace) -> list[str]:
 def print_restart_notice(actions: list[str]) -> None:
     needs_restart = any(
         action.startswith("archive-")
+        or action.startswith("trash-")
         or action == "rotate-logs"
         or action == "prune-stale-projects"
         or action == "restore-last-chat-archive"
@@ -1234,6 +1557,16 @@ def print_restart_notice(actions: list[str]) -> None:
     print("Cleanup finished. Quit and reopen Codex so the app reloads the updated local state.")
     print("Why: the cleaner changed local Codex files/database entries that the already-open UI may have cached.")
     print("You do not need to restart your Mac.")
+    print("")
+
+
+def print_archive_trash_disk_note(actions: list[str]) -> None:
+    if not any(action.startswith("trash-") for action in actions):
+        return
+    print("Archive Trash Note")
+    print("------------------")
+    print("Archive folders were moved to Trash, not permanently deleted.")
+    print("Finder may not show disk space as freed until the Trash is emptied.")
     print("")
 
 
@@ -1266,6 +1599,8 @@ def apply_cleanup(args: argparse.Namespace, home: Path) -> int:
     backup = make_backup(home, Path(args.backup_root).expanduser().resolve(), actions)
     if args.restore_last_chat_archive:
         restore_chat_archive(home, Path(args.backup_root).expanduser().resolve())
+    if args.trash_nonrestorable_archives or args.trash_old_archives:
+        trash_archives(home, backup, args)
     if args.archive_all_chats or args.archive_old_chats:
         archive_chats(home, backup, args)
     if args.rotate_logs:
@@ -1279,6 +1614,7 @@ def apply_cleanup(args: argparse.Namespace, home: Path) -> int:
     print("--------------")
     print_delta_table(before_snapshot, after_snapshot)
     print("")
+    print_archive_trash_disk_note(actions)
     print_restart_notice(actions)
     print("Done")
     return 0
@@ -1291,6 +1627,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--apply", action="store_true", help="Apply selected cleanup actions. Omit for audit only.")
     parser.add_argument("--history", action="store_true", help="Show Codex Cleaner backup history.")
     parser.add_argument("--history-limit", type=int, default=10)
+    parser.add_argument("--review-archives", action="store_true", help="Show archive storage inventory.")
+    parser.add_argument("--restorable-chats", action="store_true", help="Show chat archives that can be restored.")
     parser.add_argument("--safe-reset", action="store_true", help="Preset: old chats, stale projects, stale worktrees, logs if free.")
     parser.add_argument("--sidebar-cleanup", action="store_true", help="Preset: archive old non-pinned chats.")
     parser.add_argument("--storage-cleanup", action="store_true", help="Preset: old chats, stale worktrees, logs if free.")
@@ -1310,6 +1648,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--archive-stale-worktrees", action="store_true")
     parser.add_argument("--worktree-older-than-days", type=int, default=7)
     parser.add_argument("--restore-last-chat-archive", action="store_true")
+    parser.add_argument("--trash-old-archives", action="store_true")
+    parser.add_argument("--trash-nonrestorable-archives", action="store_true")
+    parser.add_argument("--archive-trash-older-than-days", type=int, default=DEFAULT_ARCHIVE_TRASH_DAYS)
+    parser.add_argument("--include-chat-archives", action="store_true")
+    parser.add_argument("--json-report", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     presets = [args.safe_reset, args.sidebar_cleanup, args.storage_cleanup, args.deep_archive]
     if sum(1 for selected in presets if selected) > 1:
@@ -1338,21 +1681,245 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         args.rotate_logs,
         args.prune_stale_projects,
         args.archive_stale_worktrees,
+        args.trash_old_archives,
+        args.trash_nonrestorable_archives,
     ]
     if args.restore_last_chat_archive and any(cleanup_flags):
         parser.error("restore-last-chat-archive must run by itself")
+    if args.trash_old_archives and args.trash_nonrestorable_archives:
+        parser.error("choose --trash-old-archives or --trash-nonrestorable-archives, not both")
+    archive_trash_flags = [args.trash_old_archives, args.trash_nonrestorable_archives]
+    normal_cleanup_flags = [
+        args.archive_all_chats,
+        args.archive_old_chats,
+        args.rotate_logs,
+        args.prune_stale_projects,
+        args.archive_stale_worktrees,
+    ]
+    if any(archive_trash_flags) and any(normal_cleanup_flags):
+        parser.error("archive trash actions must run separately from normal cleanup actions")
+    if args.include_chat_archives and not args.trash_old_archives:
+        parser.error("--include-chat-archives only works with --trash-old-archives")
     return args
+
+
+def capture_text(callback) -> str:
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        callback()
+    return buffer.getvalue()
+
+
+def audit_report_model(args: argparse.Namespace, home: Path, text_report: str) -> dict:
+    effective_days = max(args.archive_older_than_days, MIN_ARCHIVE_OLD_DAYS)
+    backup_root = Path(args.backup_root).expanduser().resolve()
+    snapshot, stale_projects, _ = collect_state(home, args)
+    health, health_note = cleanup_health(snapshot)
+    if health == "Clean":
+        recommended_reply = "run safe reset"
+        recommended_note = "No cleanup is needed right now; safe reset is optional maintenance."
+    elif health == "Light cleanup available":
+        recommended_reply = "rotate logs"
+        recommended_note = "Only log rotation appears useful right now."
+    else:
+        recommended_reply = "run safe reset"
+        recommended_note = "Safe reset has useful work to do."
+    blocked_actions = []
+    if snapshot.log_open and snapshot.log_storage:
+        blocked_actions.append(
+            {
+                "reply": "rotate logs",
+                "reason": "Codex is using the log database right now.",
+                "bestNextStep": "Let other Codex work finish, or quit Codex, then run rotate logs again.",
+            }
+        )
+    findings = []
+    if snapshot.archive_old_candidates:
+        findings.append(
+            {
+                "area": "Old active chats",
+                "amount": f"{snapshot.archive_old_candidates} chat(s)",
+                "size": human_size(snapshot.archive_old_candidate_storage),
+                "reply": f"archive old chats {effective_days} days",
+                "effect": "Moves matching sessions to archived_sessions; pinned and recent chats stay active.",
+            }
+        )
+    if snapshot.log_storage:
+        findings.append(
+            {
+                "area": "Log database",
+                "amount": "open now" if snapshot.log_open else "free now",
+                "size": human_size(snapshot.log_storage),
+                "reply": "rotate logs",
+                "effect": "Moves logs_2.sqlite files to archived_logs; Codex creates a fresh database later.",
+            }
+        )
+    if snapshot.stale_projects:
+        findings.append(
+            {
+                "area": "Stale project shortcuts",
+                "amount": f"{snapshot.stale_projects} config entr{'y' if snapshot.stale_projects == 1 else 'ies'}",
+                "size": "0B",
+                "reply": "prune stale projects",
+                "effect": "Forgets missing or temporary paths in Codex config; does not delete project folders.",
+            }
+        )
+    if snapshot.stale_worktrees:
+        findings.append(
+            {
+                "area": "Stale Codex worktrees",
+                "amount": f"{snapshot.stale_worktrees} folder(s)",
+                "size": human_size(snapshot.stale_worktree_storage),
+                "reply": "archive stale worktrees",
+                "effect": "Moves old temporary Codex worktrees to archived_worktrees.",
+            }
+        )
+    inventory = archive_inventory(home, backup_root)
+    if inventory["totalSizeBytes"]:
+        findings.append(
+            {
+                "area": "Existing archives",
+                "amount": f"{sum(category['itemCount'] for category in inventory['categories'])} archive folder(s)",
+                "size": inventory["totalSize"],
+                "reply": "review archives",
+                "effect": "Shows restore storage and archive cleanup options; normal safe reset does not delete archives.",
+            }
+        )
+    active_now = active_cleanup_footprint(snapshot)
+    log_note = "logs move when free" if snapshot.log_open else "logs free now"
+    size_impact = [
+        {
+            "reply": "run safe reset",
+            "activeFootprintNow": human_size(active_now),
+            "movedOutOfActiveState": human_size(snapshot.archive_old_candidate_storage + snapshot.log_storage + snapshot.stale_worktree_storage),
+            "condition": log_note,
+            "activeFootprintAfter": human_size(max(active_now - snapshot.archive_old_candidate_storage - snapshot.log_storage - snapshot.stale_worktree_storage, 0)),
+            "macDiskFreedNow": "0B; archives are retained",
+        },
+        {
+            "reply": "rotate logs",
+            "activeFootprintNow": human_size(active_now),
+            "movedOutOfActiveState": human_size(snapshot.log_storage),
+            "condition": log_note,
+            "activeFootprintAfter": human_size(max(active_now - snapshot.log_storage, 0)),
+            "macDiskFreedNow": "0B; logs are archived",
+        },
+        {
+            "reply": f"trash non-restorable archives {DEFAULT_ARCHIVE_TRASH_DAYS} days",
+            "activeFootprintNow": human_size(active_now),
+            "movedOutOfActiveState": "0B; archives are not active state",
+            "condition": "excludes chat restore archives",
+            "activeFootprintAfter": human_size(active_now),
+            "macDiskFreedNow": "Moves matching archive folders to Trash",
+        },
+    ]
+    return {
+        "kind": "audit",
+        "status": "read-only audit complete. Nothing has been changed.",
+        "health": health,
+        "recommendation": health_note,
+        "recommendedReply": recommended_reply,
+        "recommendedNote": recommended_note,
+        "protected": [
+            "pinned chats",
+            "memories",
+            "skills",
+            "plugins",
+            "credentials",
+            "normal project folders",
+            "chat restore archives unless explicitly included",
+        ],
+        "findings": findings,
+        "blockedActions": blocked_actions,
+        "sizeImpact": size_impact,
+        "currentState": {
+            "threads": {
+                "active": snapshot.threads_active,
+                "archived": snapshot.threads_archived,
+                "total": snapshot.threads_total,
+                "pinned": snapshot.pinned_threads,
+            },
+            "activeSessions": human_size(snapshot.active_session_storage),
+            "logDatabase": human_size(snapshot.log_storage),
+            "logOpen": snapshot.log_open,
+            "staleProjects": snapshot.stale_projects,
+            "staleWorktrees": snapshot.stale_worktrees,
+            "activeCleanupFootprint": human_size(active_cleanup_footprint(snapshot)),
+            "staleProjectEntries": stale_projects,
+        },
+        "archiveInventory": inventory,
+        "replyOptions": [
+            "run safe reset",
+            "rotate logs",
+            "review archives",
+            f"trash non-restorable archives {DEFAULT_ARCHIVE_TRASH_DAYS} days",
+            "show cleanup history",
+            "show restorable chats",
+            "restore last chat archive",
+        ],
+        "textReport": text_report,
+    }
+
+
+def main_json(args: argparse.Namespace) -> int:
+    backup_root = Path(args.backup_root).expanduser().resolve()
+    try:
+        if args.history:
+            text = capture_text(lambda: print_history(backup_root, max(args.history_limit, 1)))
+            payload = {"kind": "history", "textReport": text}
+        elif args.restorable_chats:
+            text = capture_text(lambda: print_restorable_chats(backup_root, max(args.history_limit, 1)))
+            payload = {"kind": "restorable_chats", "textReport": text}
+        else:
+            home = codex_home(args.codex_home)
+            if not home.exists():
+                print(json.dumps({"kind": "error", "error": "codex_home_missing", "path": str(home)}, indent=2))
+                return 2
+            if args.review_archives:
+                text = capture_text(lambda: print_archive_inventory(home, backup_root))
+                payload = {
+                    "kind": "archive_inventory",
+                    "archiveInventory": archive_inventory(home, backup_root),
+                    "textReport": text,
+                }
+            elif not args.apply:
+                text = capture_text(lambda: audit(args, home))
+                payload = audit_report_model(args, home, text)
+            else:
+                exit_code = 0
+
+                def run_apply() -> None:
+                    nonlocal exit_code
+                    exit_code = apply_cleanup(args, home)
+
+                text = capture_text(run_apply)
+                payload = {"kind": "cleanup_result", "actions": selected_actions(args), "textReport": text}
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+                return exit_code
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    except Exception as error:
+        print(json.dumps({"kind": "error", "error": str(error)}, indent=2, ensure_ascii=False))
+        return 1
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.json_report:
+        return main_json(args)
     if args.history:
         print_history(Path(args.backup_root).expanduser().resolve(), max(args.history_limit, 1))
+        return 0
+    if args.restorable_chats:
+        print_restorable_chats(Path(args.backup_root).expanduser().resolve(), max(args.history_limit, 1))
         return 0
     home = codex_home(args.codex_home)
     if not home.exists():
         print(f"codex_home_missing {home}")
         return 2
+    if args.review_archives:
+        print_archive_inventory(home, Path(args.backup_root).expanduser().resolve())
+        return 0
     if not args.apply:
         audit(args, home)
         return 0

@@ -9,7 +9,7 @@
 
 **A safer reset button for local Codex clutter. Built for people who live in Codex every day.**
 
-Codex Cleaner audits local Codex Desktop and Codex CLI state, explains what is taking up space, and helps archive old chats, rotate logs, prune stale project shortcuts, move old worktrees, review cleanup history, and restore the latest chat archive without permanently deleting history.
+Codex Cleaner audits local Codex Desktop and Codex CLI state, explains what is taking up space, and helps archive old chats, rotate logs, prune stale project shortcuts, move old worktrees, review cleanup history, manage archive storage, and restore the latest chat archive without permanently deleting history.
 
 ## Install
 
@@ -75,6 +75,9 @@ run deep archive
 show cleanup history
 show last cleanup
 restore last chat archive
+review archives
+show restorable chats
+trash non-restorable archives 30 days
 ```
 
 Codex may ask for approval because the runner fetches public GitHub package code and audits private local Codex state. That is expected. The audit is read-only, and cleanup still requires an explicit follow-up choice.
@@ -117,6 +120,7 @@ npx hapwi/codex-cleaner
 | Logs | Rotates `logs_2.sqlite` into archived logs | Waits until the log DB is free |
 | Project config | Removes saved entries for missing/temp folders | Does not delete project files |
 | Worktrees | Moves stale Codex worktrees out of the active folder | Does not touch normal project folders |
+| Archives | Reviews or trashes old archive storage | Chat restore archives are excluded by default |
 | History | Lists prior Codex Cleaner backup folders | Reads backup metadata only |
 | Restore | Restores the latest chat archive | Creates a fresh backup before restoring |
 
@@ -135,7 +139,37 @@ Audit output includes a size impact preview before anything changes. It separate
 - projected active footprint after cleanup
 - Mac disk space freed immediately
 
-Because Codex Cleaner keeps restore copies, most cleanup actions reduce active Codex clutter but free `0B` of Mac disk space immediately. Archives can be reviewed separately before any permanent deletion.
+Because Codex Cleaner keeps restore copies, most cleanup actions reduce active Codex clutter but free `0B` of Mac disk space immediately. Archives can be reviewed separately. Archive trash actions move matching folders to Mac Trash when available; they do not permanently delete by default.
+
+## Archive Management
+
+Archive management is intentionally separate from normal cleanup. The normal presets make Codex less cluttered and keep restore copies. Archive management is for reviewing or trashing those older restore/archive folders later.
+
+Read-only archive review:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run review-archives
+```
+
+Show chat archives that can be restored:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run show-restorable-chats
+```
+
+Move old non-restorable archives to Trash:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run trash-nonrestorable-archives --days 30
+```
+
+This excludes chat restore archives by default. To include old chat restore archives too, the user must explicitly choose the include-chat-archives variant:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run trash-old-archives --days 30 --include-chat-archives
+```
+
+Every archive trash run writes a manifest in the Codex Cleaner backup folder showing what moved and where it went.
 
 ## Terminal Usage
 
@@ -170,6 +204,9 @@ History and restore:
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run history
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run last-cleanup
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run restore-last-chat-archive
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run review-archives
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run show-restorable-chats
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run trash-nonrestorable-archives --days 30
 ```
 
 Structured output for Codex agents:
@@ -177,6 +214,8 @@ Structured output for Codex agents:
 ```bash
 npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run audit --json
 ```
+
+The JSON response includes both a human-readable `textReport` and structured fields for Codex agents, including `health`, `recommendedReply`, `findings`, `blockedActions`, `sizeImpact`, `archiveInventory`, and `replyOptions`.
 
 Version/status:
 
@@ -215,8 +254,8 @@ The goal is a consistent skill lifecycle: install with one command, invoke natur
 Pushing a version tag creates or updates a GitHub Release automatically:
 
 ```bash
-git tag v0.0.11
-git push origin v0.0.11
+git tag v0.0.12
+git push origin v0.0.12
 ```
 
 The runner checks the latest GitHub Release, not raw `main`, when deciding whether the installed skill is current.
@@ -230,7 +269,7 @@ npx hapwi/codex-cleaner
 So `main` should track the latest released code. For a pinned install, use:
 
 ```bash
-npx hapwi/codex-cleaner#v0.0.11
+npx hapwi/codex-cleaner#v0.0.12
 ```
 
 ## Safety
@@ -242,6 +281,7 @@ npx hapwi/codex-cleaner#v0.0.11
 - Recent chats are protected during age-based cleanup.
 - Log contents are treated as private.
 - Archives are not automatically deleted.
+- Archive cleanup moves matching archive folders to Trash by default and excludes chat restore archives unless explicitly included.
 
 ## Development
 

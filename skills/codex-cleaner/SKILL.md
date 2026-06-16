@@ -3,7 +3,7 @@ name: codex-cleaner
 description: "Use when the user invokes $codex-cleaner or asks to audit, explain, archive, rotate, restore, or clean local Codex Desktop or Codex CLI state. This skill runs the open-source codex-cleaner npx runner and presents a guided Codex cleanup control panel in chat."
 metadata:
   short-description: "Guided Codex cleanup, history, and restore"
-  version: "0.0.11"
+  version: "0.0.12"
 ---
 
 # Codex Cleaner
@@ -28,7 +28,7 @@ The runner may read `~/.hapwicleaner/install.json` for safe install/version meta
 
 ## Guided Chat Flow
 
-After audit, present the result like a small control panel:
+After audit, present the result like a small control panel followed by the detailed scan report. The top panel should help a non-technical user choose safely; the details should preserve what will be archived, moved, restored, or trashed.
 
 ```markdown
 **Codex Cleaner**
@@ -45,17 +45,19 @@ Then show:
 1. Recommended cleanup preset.
 2. Findings, with one line per detected cleanup area.
 3. Size impact preview with projected active-state and disk-space changes.
-4. Current state details.
-5. Advanced individual actions.
-6. History and restore options.
-7. Version footer.
+4. Archive management summary.
+5. Current state details.
+6. Advanced individual actions.
+7. History and restore options.
+8. Version footer.
 
-Preserve the useful detail from the runner output. The audit response must include sizes and projected changes from the runner, especially:
+The runner returns structured fields such as `health`, `recommendedReply`, `findings`, `blockedActions`, `sizeImpact`, `archiveInventory`, `replyOptions`, and `textReport`. Use those fields for the concise top panel, then preserve the useful detail from `textReport`. The audit response must include sizes and projected changes from the runner, especially:
 
 - `Findings`
 - `Size Impact Preview`
 - `Current State`
 - `Cleanup Presets`
+- `Archive Management`
 - `Advanced Cleanup`
 - `Log Rotation Wait Step` when present
 - `Stale Project Entries` when present
@@ -155,16 +157,50 @@ npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run restore-last-ch
 
 Only run restore after the user clearly chooses it. Restore changes local Codex state and should be treated like cleanup: summarize what will happen first if the user seems unsure.
 
+## Archive Management
+
+Archive management is separate from normal cleanup. Normal safe reset archives active Codex state and keeps restore copies; archive management reviews or trashes old restore/archive storage.
+
+Review archive storage:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run review-archives --json
+```
+
+Show restorable chat archives:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run show-restorable-chats --json
+```
+
+Trash old non-restorable archives:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run trash-nonrestorable-archives --days 30 --json
+```
+
+This moves matching old log/worktree archives and backup folders without chat restore manifests to Mac Trash when available. It does not permanently delete them and it excludes chat restore archives by default.
+
+Trash old archives, including chat archives only when explicitly requested:
+
+```bash
+npx --yes --package github:hapwi/codex-cleaner codex-cleaner-run trash-old-archives --days 30 --include-chat-archives --json
+```
+
+Only run the include-chat-archives variant when the user clearly says they want old chat restore archives moved to Trash too.
+
 ## Safety Rules
 
 - Never permanently delete chats, sessions, logs, worktrees, memories, skills, plugins, automations, or credentials.
 - Never archive pinned threads.
 - Never run cleanup without user approval.
 - Never run deep archive or restore from a vague "clean it up" request; ask for or infer a specific clear choice from the immediately preceding audit menu.
+- Never trash archive storage from a vague cleanup request. Run `review archives` first unless the user clearly chooses an archive trash action from the audit or archive review.
+- Never include chat restore archives in archive trash unless the user explicitly asks to include chats.
 - Treat `logs_2.sqlite` as private. Do not print raw log bodies.
 - Summarize the CLI JSON envelope, but preserve the runner's human-readable audit/detail tables. Do not dump raw JSON unless the user asks.
 - Always distinguish active Codex state moved into archives from Mac disk space actually freed. Archive-based cleanup usually frees `0B` immediately because restore copies stay on disk.
-- End every audit, history, restore, or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.11 | skill v0.0.11`.
+- End every audit, history, restore, or cleanup response with a short version line using the CLI JSON `version` object, such as `Version: Codex Cleaner CLI v0.0.12 | skill v0.0.12`.
 - After cleanup or restore, tell the user the action finished and recommend quitting/reopening Codex so the already-open UI reloads local state. A Mac restart is not needed.
 
 ## Chat Format
@@ -179,6 +215,9 @@ run deep archive
 show cleanup history
 show last cleanup
 restore last chat archive
+review archives
+show restorable chats
+trash non-restorable archives 30 days
 ```
 
 Also support these advanced replies:
@@ -189,6 +228,7 @@ archive all chats
 prune stale projects
 rotate logs
 archive stale worktrees
+trash old archives 30 days
 ```
 
 For cleanup or restore results, start with:
